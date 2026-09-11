@@ -1,0 +1,20 @@
+{
+    "schema": "1.0",
+    "type": "whmcs-servers",
+    "name": "xtreamai",
+    "version": "1.0.0",
+    "license": "MIT",
+    "category": "servers",
+    "description": {
+        "name": "Xtream AI Panel",
+        "tagline": "Provision Xtream AI IPTV lines from WHMCS.",
+        "short": "Create, renew, suspend, unsuspend, and terminate IPTV lines using a connected Xtream AI panel.",
+        "long": "Server module for provisioning IPTV lines against the Xtream AI panel API. Pair it with the Xtream AI Panel addon to connect one or more panels."
+    },
+    "authors": [
+        {
+            "name": "Xtream AI",
+            "homepage": "https://xtreamai.net/"
+        }
+    ]
+}

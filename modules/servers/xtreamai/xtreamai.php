@@ -1,0 +1,1259 @@
+<?php
+
+if (!defined('WHMCS')) {
+    exit('This file cannot be accessed directly');
+}
+
+$xtreamaiBootstrap = __DIR__ . '/../../addons/xtreamai/lib/bootstrap.php';
+if (is_file($xtreamaiBootstrap)) {
+    require_once $xtreamaiBootstrap;
+}
+
+use WHMCS\Database\Capsule;
+
+function xtreamai_libLoaded(): bool
+{
+
+    return class_exists('WhmcsXtreamAI\\Settings')
+        || class_exists('WhmcsXtreamAI\\PanelApi');
+}
+
+function xtreamai_requireAddon(): void
+{
+    if (!xtreamai_libLoaded()) {
+        throw new \RuntimeException('Addon not installed. Install and activate the Xtream AI Panel addon first.');
+    }
+}
+
+function xtreamai_MetaData()
+{
+    return [
+        'DisplayName' => 'Xtream AI Panel',
+        'APIVersion' => '1.1',
+        'RequiresServer' => false,
+    ];
+}
+
+function xtreamai_ConfigOptions()
+{
+    $panelOptions = [];
+    $packageOptions = ['official' => [], 'trial' => []];
+    $panelDescription = 'Select the panel that will provision lines for this product. Add panels in Addons → Xtream AI Panel.';
+    $packageDescription = 'Choose the package used for this product.';
+    $bouquetDescription = 'Select the bouquets to activate on lines created from this product.';
+    $credits = null;
+    $bouquets = [];
+
+    try {
+        xtreamai_requireAddon();
+        \WhmcsXtreamAI\Settings::ensureTables();
+
+        foreach (\WhmcsXtreamAI\PanelStore::allActive() as $panel) {
+            if (isset($panel->id)) {
+                $panelOptions[(string) $panel->id] = (string) $panel->name;
+            }
+        }
+
+        $panelId = xtreamai_configPanelId();
+        $packageType = xtreamai_configOptionValue(3, 'official');
+        if ($packageType !== 'official' && $packageType !== 'trial') {
+            $packageType = 'official';
+        }
+
+        if ($panelId > 0) {
+            foreach (\WhmcsXtreamAI\PanelApi::packages($panelId) as $package) {
+                $id = isset($package['id']) ? (string) $package['id'] : '';
+                if ($id === '') {
+                    continue;
+                }
+                $name = (isset($package['name']) && $package['name'] !== '')
+                    ? (string) $package['name']
+                    : 'Package #' . $id;
+                $label = $name;
+                if (!empty($package['duration'])) {
+                    $label .= ' (' . $package['duration'] . ')';
+                }
+                if (!empty($package['is_official'])) {
+                    $packageOptions['official'][$id] = $label;
+                }
+                if (!empty($package['is_trial'])) {
+                    $packageOptions['trial'][$id] = $label;
+                }
+            }
+
+            try {
+                $bouquets = \WhmcsXtreamAI\PanelApi::bouquets($panelId);
+            } catch (\Throwable $e) {
+                $bouquets = [];
+                $bouquetDescription .= ' Could not load bouquets: ' . $e->getMessage();
+            }
+
+            try {
+                $credits = \WhmcsXtreamAI\PanelApi::credits($panelId);
+            } catch (\Throwable $e) {
+                $credits = null;
+            }
+        }
+    } catch (\Throwable $e) {
+        $panelDescription = 'Could not load panel data: ' . $e->getMessage();
+    }
+
+    if (!$panelOptions) {
+        $panelOptions = ['0' => 'No panels — add one in Addons → Xtream AI Panel'];
+    }
+
+    $currentPackageOptions = isset($packageOptions[$packageType]) ? $packageOptions[$packageType] : $packageOptions['official'];
+    if (!$currentPackageOptions) {
+        $currentPackageOptions = ['0' => ($packageType === 'trial' ? 'No trial packages found' : 'No packages found')];
+    }
+
+    if ($credits !== null && $credits !== '') {
+        $packageDescription .= xtreamai_creditsBadge((string) $credits);
+    }
+
+    $packageDescription .= xtreamai_packageFilter($packageOptions);
+
+    $bouquetDescription .= xtreamai_bouquetPicker($bouquets);
+
+    $accountTypeDescription = 'Choose the account type this product provisions. Sub-Reseller accounts use the Credits value instead of a package/bouquet and ignore those fields.';
+    $accountTypeDescription .= xtreamai_accountTypeVisibility();
+
+    return [
+        'panel_id' => [
+            'FriendlyName' => 'Panel',
+            'Type' => 'dropdown',
+            'Options' => $panelOptions,
+            'Description' => $panelDescription,
+        ],
+        'package_id' => [
+            'FriendlyName' => 'Package',
+            'Type' => 'dropdown',
+            'Options' => $currentPackageOptions,
+            'Description' => $packageDescription,
+        ],
+        'package_type' => [
+            'FriendlyName' => 'Package Type',
+            'Type' => 'dropdown',
+            'Options' => ['official' => 'Official', 'trial' => 'Trial'],
+            'Default' => 'official',
+            'Description' => 'Choose Official or Trial. The package list updates instantly without saving the page.',
+        ],
+        'bouquets' => [
+            'FriendlyName' => 'Bouquets',
+            'Type' => 'text',
+            'Size' => '45',
+            'Description' => $bouquetDescription,
+        ],
+        'account_type' => [
+            'FriendlyName' => 'Account Type',
+            'Type' => 'dropdown',
+            'Options' => ['line' => 'Line (default)', 'reseller' => 'Sub-Reseller'],
+            'Default' => 'line',
+            'Description' => $accountTypeDescription,
+        ],
+        'credits' => [
+            'FriendlyName' => 'Credits',
+            'Type' => 'text',
+            'Size' => '10',
+            'Default' => '0',
+            'Description' => 'Credits assigned on creation and on each renewal (Sub-Reseller accounts only)',
+        ],
+        'max_connections' => [
+            'FriendlyName' => 'Max Connections',
+            'Type' => 'text',
+            'Size' => '5',
+            'Default' => '0',
+            'Description' => 'Maximum concurrent connections per line. Set to 0 to use the package default. Non-zero values only apply when the panel Key type is Admin (reseller keys will silently ignore this).',
+        ],
+        'sub_reseller_member_group_id' => [
+            'FriendlyName' => 'Sub-Reseller Member Group ID',
+            'Type' => 'text',
+            'Size' => '5',
+            'Default' => '0',
+            'Description' => 'Numeric id of the panel member group this Sub-Reseller product creates accounts in. Only used when the panel Key type is Admin (reseller keys inherit the group from their sub-reseller setup).',
+        ],
+    ];
+}
+
+function xtreamai_creditsBadge(string $credits): string
+{
+    $data = htmlspecialchars($credits, ENT_QUOTES, 'UTF-8');
+    $style = '<style>.xtai-credits-pill{display:flex;justify-content:flex-end;margin-bottom:9px}.xtai-credits-pill span{display:inline-flex;align-items:center;gap:7px;background:#ecfdf5;border:1px solid #bbf7d0;color:#166534;padding:6px 12px;border-radius:999px;font-weight:700;font-size:12.5px}.xtai-credits-pill svg{flex:none}</style>';
+    $script = <<<'JS'
+<script>
+(function () {
+    function run() {
+        if (!window.jQuery) { return; }
+        var $ = window.jQuery;
+        var $field = $('[name="packageconfigoption[2]"]').first();
+        if (!$field.length) { return; }
+        var $td = $field.closest('td');
+        if (!$td.length || $td.find('.xtai-credits-pill').length) { return; }
+        var credits = $td.find('.xtai-credits-source').first().attr('data-credits') || '';
+        $td.prepend(
+            '<div class="xtai-credits-pill"><span>' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5c0-1 1-1.5 2.5-1.5s2.5.5 2.5 1.5-1 1.5-2.5 1.5-2.5.5-2.5 1.5 1 1.5 2.5 1.5 2.5-.5 2.5-1.5"/></svg>' +
+            'Credits: ' +
+            $('<div>').text(credits).html() +
+            '</span></div>'
+        );
+    }
+    setTimeout(run, 60);
+    setTimeout(run, 300);
+})();
+</script>
+JS;
+    return $style . '<span class="xtai-credits-source" data-credits="' . $data . '"></span>' . $script;
+}
+
+function xtreamai_packageFilter(array $packageOptions): string
+{
+    $payload = base64_encode(json_encode($packageOptions));
+    $data = htmlspecialchars($payload, ENT_QUOTES, 'UTF-8');
+    $script = <<<'JS'
+<script>
+(function () {
+    function boot() {
+        if (!window.jQuery) { return; }
+        var $ = window.jQuery;
+        var $pkg = $('[name="packageconfigoption[2]"]').first();
+        var $type = $('[name="packageconfigoption[3]"]').first();
+        if (!$pkg.length || !$type.length || $pkg.data('xtai-package-ready')) { return; }
+        $pkg.data('xtai-package-ready', 1);
+        var $src = $pkg.closest('td').find('.xtai-package-source').first();
+        var raw = $src.attr('data-packages') || '';
+        var sets = { official: {}, trial: {} };
+        try { sets = raw ? JSON.parse(atob(raw)) : sets; } catch (e) { sets = { official: {}, trial: {} }; }
+        function render(type) {
+            type = String(type || 'official').toLowerCase();
+            if (type !== 'trial') { type = 'official'; }
+            var list = sets[type] || {};
+            var current = String($pkg.val() || '');
+            $pkg.empty();
+            var keys = Object.keys(list);
+            if (!keys.length) {
+                $pkg.append($('<option>', { value: '0', text: 'No ' + (type === 'trial' ? 'trial' : 'official') + ' packages found' }));
+                return;
+            }
+            keys.forEach(function (id) {
+                $pkg.append($('<option>', { value: id, text: list[id] }));
+            });
+            if (Object.prototype.hasOwnProperty.call(list, current)) {
+                $pkg.val(current);
+            } else {
+                $pkg.val(keys[0]);
+            }
+            $pkg.trigger('change');
+        }
+        $type.on('change.xtaiPackages', function () { render($(this).val()); });
+    }
+    boot();
+    setTimeout(boot, 60);
+    setTimeout(boot, 300);
+})();
+</script>
+JS;
+    return '<span class="xtai-package-source" data-packages="' . $data . '"></span>' . $script;
+}
+
+function xtreamai_accountTypeVisibility(): string
+{
+    $script = <<<'JS'
+<script>
+(function () {
+    function boot() {
+        if (!window.jQuery) { return; }
+        var $ = window.jQuery;
+        var $type = $('[name="packageconfigoption[5]"]').first();
+        var $credits = $('[name="packageconfigoption[6]"]').first();
+        var $group = $('[name="packageconfigoption[8]"]').first();
+        if (!$type.length || !$credits.length || $type.data('xtai-account-ready')) { return; }
+        $type.data('xtai-account-ready', 1);
+        function apply() {
+            var isReseller = String($type.val() || '').toLowerCase() === 'reseller';
+            $credits.closest('tr').toggle(isReseller);
+            if ($group.length) { $group.closest('tr').toggle(isReseller); }
+        }
+        $type.on('change.xtaiAccount', apply);
+        apply();
+    }
+    boot();
+    setTimeout(boot, 60);
+    setTimeout(boot, 300);
+})();
+</script>
+JS;
+    return $script;
+}
+
+function xtreamai_bouquetPicker(array $bouquets): string
+{
+    $payload = base64_encode(json_encode(array_values($bouquets)));
+    $data = htmlspecialchars($payload, ENT_QUOTES, 'UTF-8');
+    $style = '<style>'
+        . '.xtai-bouquet-box{border:1px solid #e1e5ed;border-radius:10px;background:#fff;overflow:hidden;margin-top:6px}'
+        . '.xtai-bouquet-toolbar{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid #eef0f5;background:#f8fafc}'
+        . '.xtai-bouquet-search{flex:1;min-width:0;font:inherit;font-size:13px;padding:7px 10px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#1f2937;transition:border-color .16s ease,box-shadow .16s ease}'
+        . '.xtai-bouquet-search:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.16)}'
+        . '.xtai-bouquet-count{flex:none;display:inline-flex;align-items:center;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap}'
+        . '.xtai-bouquet-list{max-height:200px;overflow:auto;padding:6px 10px}'
+        . '.xtai-bouquet-item{display:flex;gap:10px;align-items:center;padding:6px 4px;margin:0;cursor:pointer;border-radius:7px;transition:background .15s ease}'
+        . '.xtai-bouquet-item:hover{background:#f3f4f6}'
+        . '.xtai-bouquet-item input{position:absolute;opacity:0;width:1px;height:1px;overflow:hidden}'
+        . '.xtai-checkmark{flex:none;width:18px;height:18px;border:1.5px solid #d1d5db;border-radius:5px;background:#fff;display:inline-flex;align-items:center;justify-content:center;transition:background .15s ease,border-color .15s ease}'
+        . '.xtai-bouquet-item input:checked + .xtai-checkmark{background:#2563eb;border-color:#2563eb}'
+        . '.xtai-bouquet-item input:checked + .xtai-checkmark::after{content:"";width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg);margin-top:-1px}'
+        . '.xtai-bouquet-name{font-size:13px;color:#1f2937;line-height:1.4;min-width:0}'
+        . '.xtai-bouquet-empty{padding:14px 6px;text-align:center;color:#6b7280;font-size:12.5px}'
+        . '.xtai-bouquet-hint{margin-top:7px;color:#6d7890;font-size:12px}'
+        . '</style>';
+    $script = <<<'JS'
+<script>
+(function () {
+    function boot() {
+        if (!window.jQuery) { return; }
+        var $ = window.jQuery;
+        var $input = $('[name="packageconfigoption[4]"]').first();
+        if (!$input.length || $input.data('xtai-bouquet-ready')) { return; }
+        $input.data('xtai-bouquet-ready', 1);
+        var raw = $input.closest('td').find('.xtai-bouquet-source').first().attr('data-bouquets') || '';
+        var items = [];
+        try { items = raw ? JSON.parse(atob(raw)) : []; } catch (e) { items = []; }
+        function ids(v) {
+            return String(v || '').split(/[^0-9]+/).filter(function (x) { return parseInt(x, 10) > 0; });
+        }
+        var selected = ids($input.val());
+        $input.attr('type', 'hidden');
+        var $box = $('<div class="xtai-bouquet-box"></div>');
+        $input.after($box);
+
+        function sync() {
+            var vals = [];
+            $box.find('input:checked').each(function () { vals.push($(this).val()); });
+            $input.val(vals.join(','));
+            var n = vals.length;
+            $box.find('.xtai-bouquet-count').text(n + ' selected');
+        }
+
+        if (!items.length) {
+            $box.html('<div class="alert alert-warning" style="margin:0">No bouquets were returned by this panel. Check the API permissions, then save and reload.</div>');
+            return;
+        }
+
+        $box.append(
+            '<div class="xtai-bouquet-toolbar">' +
+            '<input type="text" class="xtai-bouquet-search" placeholder="Search bouquets..." aria-label="Search bouquets">' +
+            '<span class="xtai-bouquet-count">' + selected.length + ' selected</span>' +
+            '</div>' +
+            '<div class="xtai-bouquet-list"></div>'
+        );
+        var $list = $box.find('.xtai-bouquet-list');
+
+        function renderList(filter) {
+            filter = String(filter || '').toLowerCase();
+            var visible = 0;
+            items.forEach(function (b) {
+                var id = String(b.id);
+                var name = b.name || ('Bouquet #' + id);
+                var $existing = $list.find('.xtai-bouquet-item[data-id="' + id + '"]');
+                if (filter && name.toLowerCase().indexOf(filter) === -1) {
+                    if ($existing.length) { $existing.hide(); }
+                    return;
+                }
+                visible++;
+                if ($existing.length) { $existing.show(); return; }
+                var checked = selected.indexOf(id) !== -1 ? ' checked' : '';
+                var $label = $(
+                    '<label class="xtai-bouquet-item" data-id="' + id + '">' +
+                    '<input type="checkbox" value="' + id + '"' + checked + '>' +
+                    '<span class="xtai-checkmark"></span>' +
+                    '<span class="xtai-bouquet-name">' + $('<div>').text(name).html() + '</span>' +
+                    '</label>'
+                );
+                $list.append($label);
+            });
+            var $empty = $list.find('.xtai-bouquet-empty');
+            if (!visible) {
+                if (!$empty.length) { $empty = $('<div class="xtai-bouquet-empty">No bouquets match your search.</div>'); $list.append($empty); }
+                $empty.show();
+            } else if ($empty.length) {
+                $empty.hide();
+            }
+        }
+
+        $box.on('input', '.xtai-bouquet-search', function () { renderList($(this).val()); });
+        $box.on('change', 'input[type=checkbox]', sync);
+        renderList('');
+    }
+    boot();
+    setTimeout(boot, 60);
+    setTimeout(boot, 300);
+})();
+</script>
+JS;
+    return $style . '<span class="xtai-bouquet-source" data-bouquets="' . $data . '"></span>'
+        . '<div class="xtai-bouquet-hint">Select only the bouquets that should be activated for lines created from this product.</div>'
+        . $script;
+}
+
+function xtreamai_configOptionValue(int $slot, string $default = ''): string
+{
+    if ($slot < 1) {
+        return $default;
+    }
+    if (isset($_REQUEST['packageconfigoption'][$slot])) {
+        return trim((string) $_REQUEST['packageconfigoption'][$slot]);
+    }
+    $productId = xtreamai_requestProductId();
+    if ($productId > 0) {
+        try {
+            $product = Capsule::table('tblproducts')->where('id', $productId)->first();
+            $field = 'configoption' . $slot;
+            if ($product && isset($product->{$field}) && (string) $product->{$field} !== '') {
+                return trim((string) $product->{$field});
+            }
+        } catch (\Throwable $e) {
+
+        }
+    }
+    return $default;
+}
+
+function xtreamai_requestProductId(): int
+{
+    return !empty($_REQUEST['id']) ? (int) $_REQUEST['id'] : 0;
+}
+
+function xtreamai_configPanelId(): int
+{
+    $raw = xtreamai_configOptionValue(1, '');
+    if ($raw !== '') {
+        if (preg_match('/^(\d+)\s*:/', $raw, $m)) {
+            return (int) $m[1];
+        }
+        if (preg_match('/^[0-9]+$/', $raw) === 1) {
+            return (int) $raw;
+        }
+        return (int) $raw;
+    }
+    try {
+        $panel = \WhmcsXtreamAI\PanelStore::firstActive();
+        return $panel ? (int) $panel->id : 0;
+    } catch (\Throwable $e) {
+        return 0;
+    }
+}
+
+function xtreamai_parsePanelPackage(array $params): array
+{
+    $opt1 = $params['configoption1'] ?? '';
+    if ($opt1 === '' || $opt1 === null) {
+        $opt1 = $params['configoptions']['panel_id'] ?? '';
+    }
+    $opt2 = $params['configoption2'] ?? null;
+    if ($opt2 === null || $opt2 === '') {
+        $opt2 = $params['configoptions']['package_id'] ?? '';
+    }
+    $opt3 = $params['configoption3'] ?? null;
+    if ($opt3 === null || $opt3 === '') {
+        $opt3 = $params['configoptions']['package_type'] ?? 'official';
+    }
+
+    return [
+        'panel_id' => (int) $opt1,
+        'package_id' => (int) $opt2,
+        'package_type' => strtolower(trim((string) $opt3)),
+    ];
+}
+
+function xtreamai_accountType(array $params): string
+{
+    $type = (string) ($params['configoption5'] ?? ($params['configoptions']['account_type'] ?? ''));
+    return strtolower(trim($type)) === 'reseller' ? 'reseller' : 'line';
+}
+
+function xtreamai_resellerCredits(array $params): float
+{
+    $raw = $params['configoption6'] ?? ($params['configoptions']['credits'] ?? '0');
+    if (is_array($raw)) {
+        $raw = reset($raw);
+    }
+    $credits = (float) $raw;
+    return $credits > 0 ? $credits : 0.0;
+}
+
+function xtreamai_panelIdForService(array $params): int
+{
+    $parsed = xtreamai_parsePanelPackage($params);
+    if ($parsed['panel_id'] > 0) {
+        return $parsed['panel_id'];
+    }
+    try {
+        $row = \WhmcsXtreamAI\ServiceStore::find((int) ($params['serviceid'] ?? 0));
+        if ($row && !empty($row->panel_id)) {
+            return (int) $row->panel_id;
+        }
+    } catch (\Throwable $e) {
+
+    }
+    $panel = \WhmcsXtreamAI\PanelStore::firstActive();
+    return $panel ? (int) $panel->id : 0;
+}
+
+function xtreamai_requirePanelId(array $params): int
+{
+    $panelId = xtreamai_panelIdForService($params);
+    if ($panelId < 1) {
+        throw new \RuntimeException('No panel found. Add and activate a panel in Addons → Xtream AI Panel.');
+    }
+    return $panelId;
+}
+
+function xtreamai_packageIdForService(array $params): int
+{
+    return xtreamai_parsePanelPackage($params)['package_id'];
+}
+
+function xtreamai_lineIdForService(array $params): string
+{
+    $row = \WhmcsXtreamAI\ServiceStore::find((int) ($params['serviceid'] ?? 0));
+    if ($row && !empty($row->panel_account_id)) {
+        return (string) $row->panel_account_id;
+    }
+    throw new \RuntimeException('This service has no panel line yet. Provision it first.');
+}
+
+function xtreamai_selectedBouquets(array $params): array
+{
+    $raw = $params['configoption4'] ?? ($params['configoptions']['bouquets'] ?? '');
+    if (is_array($raw)) {
+        $parts = $raw;
+    } else {
+        $parts = preg_split('/[^0-9]+/', (string) $raw, -1, PREG_SPLIT_NO_EMPTY);
+        if ($parts === false) {
+            $parts = [];
+        }
+    }
+    $out = [];
+    foreach ($parts as $part) {
+        $id = (int) $part;
+        if ($id > 0) {
+            $out[$id] = $id;
+        }
+    }
+    return array_values($out);
+}
+
+function xtreamai_maxConnectionsForService(array $params): int
+{
+    $raw = $params['configoption7'] ?? ($params['configoptions']['max_connections'] ?? '0');
+    $value = (int) trim((string) $raw);
+    if ($value < 0) {
+        $value = 0;
+    }
+    if ($value > 100) {
+        $value = 100;
+    }
+    return $value;
+}
+
+function xtreamai_subResellerMemberGroupId(array $params): int
+{
+    $raw = $params['configoption8'] ?? ($params['configoptions']['sub_reseller_member_group_id'] ?? '0');
+    if (is_array($raw)) {
+        $raw = reset($raw);
+    }
+    $value = (int) trim((string) $raw);
+    return $value > 0 ? $value : 0;
+}
+
+function xtreamai_clamp(int $value, int $min, int $max): int
+{
+    if ($value < $min) {
+        return $min;
+    }
+    if ($value > $max) {
+        return $max;
+    }
+    return $value;
+}
+
+function xtreamai_randomString(int $length, string $type = 'alphanumeric'): string
+{
+    return \WhmcsXtreamAI\Settings::randomString($length, $type);
+}
+
+function xtreamai_lineUsername(array $params): string
+{
+    $settings = \WhmcsXtreamAI\Settings::credentialSettings();
+
+    $existing = preg_replace('/[^A-Za-z0-9_-]/', '', (string) ($params['username'] ?? ''));
+    if ($existing === null) {
+        $existing = '';
+    }
+
+    if ($settings['username_auto'] !== '1' && strlen($existing) >= 3) {
+        return substr($existing, 0, 32);
+    }
+
+    $prefix = preg_replace('/[^A-Za-z0-9_-]/', '', (string) $settings['username_prefix']);
+    if ($prefix === null) {
+        $prefix = '';
+    }
+    $prefix = substr($prefix, 0, 10);
+
+    $length = xtreamai_clamp((int) $settings['username_length'], 4, 32);
+
+    if ($length < strlen($prefix)) {
+        $prefix = substr($prefix, 0, max(0, $length - 3));
+    }
+
+    $randomLength = max(3, $length - strlen($prefix));
+
+    return substr($prefix . xtreamai_randomString($randomLength, $settings['username_type']), 0, $length);
+}
+
+function xtreamai_renderNotes(array $params): string
+{
+    $template = (string) \WhmcsXtreamAI\Settings::get('reseller_notes', '');
+    if ($template === '') {
+        $template = 'WHMCS:{service_id}';
+    }
+    $client = (isset($params['clientsdetails']) && is_array($params['clientsdetails']))
+        ? $params['clientsdetails']
+        : [];
+    $tags = [
+        '{service_id}' => (string) ($params['serviceid'] ?? ''),
+        '{client_id}' => (string) ($params['userid'] ?? ''),
+        '{client_name}' => trim((($client['firstname'] ?? '') . ' ') . ($client['lastname'] ?? '')),
+        '{client_email}' => (string) ($client['email'] ?? ''),
+        '{client_phonenumber}' => (string) ($client['phonenumber'] ?? ''),
+        '{product_name}' => (string) ($params['productname'] ?? ''),
+    ];
+    return substr(strtr($template, $tags), 0, 2000);
+}
+
+function xtreamai_linePassword(array $params): string
+{
+    $settings = \WhmcsXtreamAI\Settings::credentialSettings();
+
+    $existing = preg_replace('/[^A-Za-z0-9]/', '', trim((string) ($params['password'] ?? '')));
+    if ($existing === null) {
+        $existing = '';
+    }
+
+    if ($settings['password_auto'] !== '1' && strlen($existing) >= 8) {
+        return substr($existing, 0, 32);
+    }
+
+    $length = xtreamai_clamp((int) $settings['password_length'], 8, 32);
+
+    return xtreamai_randomString($length, $settings['password_type']);
+}
+
+function xtreamai_updateHostingCredentials(int $serviceId, string $username, string $password): void
+{
+    if ($serviceId < 1) {
+        return;
+    }
+    $update = [];
+    if ($username !== '') {
+        $update['username'] = $username;
+    }
+    if ($password !== '') {
+        $update['password'] = encrypt($password);
+    }
+    if ($update) {
+        Capsule::table('tblhosting')->where('id', $serviceId)->update($update);
+    }
+}
+
+function xtreamai_formatDuration(int $seconds): string
+{
+    if ($seconds < 0) {
+        $seconds = 0;
+    }
+    $hours = intdiv($seconds, 3600);
+    $minutes = intdiv($seconds % 3600, 60);
+
+    return $hours . ':' . str_pad((string) $minutes, 2, '0', STR_PAD_LEFT);
+}
+
+function xtreamai_formatDate(string $value): string
+{
+    $raw = trim($value);
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $raw, $m)) {
+        return $m[3] . '/' . $m[2] . '/' . $m[1];
+    }
+    $ts = strtotime($raw);
+    if ($ts) {
+        return gmdate('d/m/Y', $ts);
+    }
+    return $raw;
+}
+
+function xtreamai_esc(string $value): string
+{
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
+
+function xtreamai_expiryDate(array $line): string
+{
+    if (empty($line['expires_at'])) {
+        return '';
+    }
+    $raw = trim((string) $line['expires_at']);
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $raw, $m)) {
+        return $m[1] . '-' . $m[2] . '-' . $m[3];
+    }
+    $ts = strtotime($raw);
+    if ($ts) {
+        return gmdate('Y-m-d', $ts);
+    }
+    return '';
+}
+
+function xtreamai_isFreeBilling(string $billingCycle): bool
+{
+    $cycle = strtolower(str_replace([' ', '-', '_'], '', $billingCycle));
+    return $cycle === 'free' || $cycle === 'freeaccount';
+}
+
+function xtreamai_hidesNextDueDate(string $billingCycle): bool
+{
+    $cycle = strtolower(str_replace([' ', '-', '_'], '', $billingCycle));
+    return $cycle === 'free' || $cycle === 'freeaccount' || $cycle === 'onetime';
+}
+
+function xtreamai_updateNextDueDate(int $serviceId, array $line, array $params): void
+{
+    if ($serviceId < 1) {
+        return;
+    }
+    $billingCycle = (string) ($params['billingcycle'] ?? '');
+    if (xtreamai_hidesNextDueDate($billingCycle)) {
+        return;
+    }
+    $expiry = xtreamai_expiryDate($line);
+    if ($expiry === '') {
+        return;
+    }
+    Capsule::table('tblhosting')->where('id', $serviceId)->update(['nextduedate' => $expiry]);
+}
+
+function xtreamai_refreshFromPanel(array $params): ?array
+{
+    try {
+        xtreamai_requireAddon();
+        \WhmcsXtreamAI\Settings::ensureTables();
+
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        if ($serviceId < 1) {
+            return null;
+        }
+
+        $panelId = xtreamai_requirePanelId($params);
+        $lineId = xtreamai_lineIdForService($params);
+        $line = \WhmcsXtreamAI\PanelApi::getLine($panelId, $lineId);
+        if (!$line || empty($line['id'])) {
+            return null;
+        }
+
+        $status = !empty($line['enabled']) ? 'Active' : 'Suspended';
+        \WhmcsXtreamAI\ServiceStore::updateStatus(
+            $serviceId,
+            $status,
+            isset($line['expires_at']) ? (string) $line['expires_at'] : null
+        );
+
+        return $line;
+    } catch (\Throwable $e) {
+        return null;
+    }
+}
+
+function xtreamai_logModuleCall(string $action, string $requestSummary, string $responseSummary, string $result): void
+{
+    if (!function_exists('logModuleCall')) {
+        return;
+    }
+    logModuleCall('xtreamai', $action, $requestSummary, $responseSummary, $result, []);
+}
+
+function xtreamai_logRequestSummary(string $action, array $params): string
+{
+    $parts = [];
+
+    $serviceId = (int) ($params['serviceid'] ?? 0);
+    if ($serviceId > 0) {
+        $parts[] = 'service=' . $serviceId;
+    }
+
+    try {
+        $parts[] = 'panel=' . xtreamai_requirePanelId($params);
+    } catch (\Throwable $e) {
+
+    }
+
+    $packageId = xtreamai_packageIdForService($params);
+    if ($packageId > 0) {
+        $parts[] = 'package=' . $packageId;
+    }
+
+    try {
+        $lineId = xtreamai_lineIdForService($params);
+        if ($lineId !== '') {
+            $parts[] = 'line=' . $lineId;
+        }
+    } catch (\Throwable $e) {
+
+    }
+
+    return $action . ($parts ? ' ' . implode(' ', $parts) : '');
+}
+
+function xtreamai_execute(array $params, string $action, callable $fn): string
+{
+    $requestSummary = xtreamai_logRequestSummary($action, $params);
+
+    try {
+        xtreamai_requireAddon();
+        \WhmcsXtreamAI\Settings::ensureTables();
+        $result = $fn($params);
+        xtreamai_logModuleCall($action, $requestSummary, 'success', (string) $result);
+        return $result;
+    } catch (\Throwable $e) {
+        $message = $e->getMessage();
+        xtreamai_logModuleCall($action, $requestSummary, $message, $message);
+        return $message;
+    }
+}
+
+function xtreamai_CreateAccount(array $params)
+{
+    return xtreamai_execute($params, 'create', static function (array $params): string {
+        if (xtreamai_accountType($params) === 'reseller') {
+            return xtreamai_createResellerAccount($params);
+        }
+
+        $panelId = xtreamai_requirePanelId($params);
+        $packageId = xtreamai_packageIdForService($params);
+        if ($packageId < 1) {
+            throw new \RuntimeException('No package selected for this product.');
+        }
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        if ($serviceId < 1) {
+            throw new \RuntimeException('Invalid service id.');
+        }
+
+        $username = xtreamai_lineUsername($params);
+        $password = xtreamai_linePassword($params);
+        $bouquets = xtreamai_selectedBouquets($params);
+        $notes = xtreamai_renderNotes($params);
+
+        $memberId = \WhmcsXtreamAI\PanelApi::keyType($panelId) === 'admin'
+            ? \WhmcsXtreamAI\PanelApi::adminOwnerMemberId($panelId)
+            : null;
+
+        $maxConn = xtreamai_maxConnectionsForService($params);
+        $line = \WhmcsXtreamAI\PanelApi::createLine(
+            $panelId,
+            $packageId,
+            $memberId,
+            $username,
+            $password,
+            $bouquets,
+            $maxConn > 0 ? $maxConn : null,
+            $notes
+        );
+
+        $finalUsername = !empty($line['username']) ? (string) $line['username'] : $username;
+        $finalPassword = !empty($line['password']) ? (string) $line['password'] : $password;
+
+        \WhmcsXtreamAI\ServiceStore::link($serviceId, $panelId, (string) $line['id'], $finalUsername, $packageId);
+        \WhmcsXtreamAI\ServiceStore::updateStatus(
+            $serviceId,
+            'Active',
+            isset($line['expires_at']) ? (string) $line['expires_at'] : null
+        );
+
+        xtreamai_updateHostingCredentials($serviceId, $finalUsername, $finalPassword);
+        xtreamai_updateNextDueDate($serviceId, $line, $params);
+
+        return 'success';
+    });
+}
+
+function xtreamai_createResellerAccount(array $params): string
+{
+    $panelId = xtreamai_requirePanelId($params);
+    $serviceId = (int) ($params['serviceid'] ?? 0);
+    if ($serviceId < 1) {
+        throw new \RuntimeException('Invalid service id.');
+    }
+
+    $email = trim((string) ($params['clientsdetails']['email'] ?? ''));
+    if ($email === '') {
+        throw new \RuntimeException('A client email address is required to provision a Sub-Reseller account.');
+    }
+
+    $credits = xtreamai_resellerCredits($params);
+    $username = xtreamai_lineUsername($params);
+    $password = xtreamai_linePassword($params);
+
+    $memberGroupId = xtreamai_subResellerMemberGroupId($params);
+    $reseller = \WhmcsXtreamAI\PanelApi::createReseller(
+        $panelId,
+        $username,
+        $password,
+        $email,
+        $credits > 0 ? $credits : null,
+        xtreamai_renderNotes($params),
+        $memberGroupId > 0 ? $memberGroupId : null
+    );
+
+    $finalUsername = !empty($reseller['username']) ? (string) $reseller['username'] : $username;
+
+    \WhmcsXtreamAI\ServiceStore::link($serviceId, $panelId, (string) $reseller['id'], $finalUsername, 0);
+    \WhmcsXtreamAI\ServiceStore::updateStatus($serviceId, 'Active');
+
+    xtreamai_updateHostingCredentials($serviceId, $finalUsername, $password);
+
+    return 'success';
+}
+
+function xtreamai_SuspendAccount(array $params)
+{
+    return xtreamai_execute($params, 'suspend', static function (array $params): string {
+        $panelId = xtreamai_requirePanelId($params);
+        $lineId = xtreamai_lineIdForService($params);
+        if (xtreamai_accountType($params) === 'reseller') {
+            \WhmcsXtreamAI\PanelApi::setResellerStatus($panelId, $lineId, false);
+        } else {
+            \WhmcsXtreamAI\PanelApi::setLineEnabled($panelId, $lineId, false);
+        }
+        \WhmcsXtreamAI\ServiceStore::updateStatus((int) ($params['serviceid'] ?? 0), 'Suspended');
+        return 'success';
+    });
+}
+
+function xtreamai_UnsuspendAccount(array $params)
+{
+    return xtreamai_execute($params, 'unsuspend', static function (array $params): string {
+        $panelId = xtreamai_requirePanelId($params);
+        $lineId = xtreamai_lineIdForService($params);
+        if (xtreamai_accountType($params) === 'reseller') {
+            \WhmcsXtreamAI\PanelApi::setResellerStatus($panelId, $lineId, true);
+        } else {
+            \WhmcsXtreamAI\PanelApi::setLineEnabled($panelId, $lineId, true);
+        }
+        \WhmcsXtreamAI\ServiceStore::updateStatus((int) ($params['serviceid'] ?? 0), 'Active');
+        return 'success';
+    });
+}
+
+function xtreamai_TerminateAccount(array $params)
+{
+    return xtreamai_execute($params, 'terminate', static function (array $params): string {
+        $panelId = xtreamai_requirePanelId($params);
+        $lineId = xtreamai_lineIdForService($params);
+        if (xtreamai_accountType($params) === 'reseller') {
+            \WhmcsXtreamAI\PanelApi::setResellerStatus($panelId, $lineId, false);
+            \WhmcsXtreamAI\ServiceStore::unlink((int) ($params['serviceid'] ?? 0));
+        } else {
+            \WhmcsXtreamAI\PanelApi::deleteLine($panelId, $lineId);
+            \WhmcsXtreamAI\ServiceStore::unlink((int) ($params['serviceid'] ?? 0));
+        }
+        return 'success';
+    });
+}
+
+function xtreamai_Renew(array $params)
+{
+    return xtreamai_execute($params, 'renew', static function (array $params): string {
+        $panelId = xtreamai_requirePanelId($params);
+        $lineId = xtreamai_lineIdForService($params);
+
+        if (xtreamai_accountType($params) === 'reseller') {
+            $credits = xtreamai_resellerCredits($params);
+            if ($credits > 0) {
+                \WhmcsXtreamAI\PanelApi::adjustResellerCredits(
+                    $panelId,
+                    $lineId,
+                    $credits,
+                    'WHMCS renewal service #' . (int) ($params['serviceid'] ?? 0)
+                );
+            }
+            \WhmcsXtreamAI\ServiceStore::updateStatus((int) ($params['serviceid'] ?? 0), 'Active');
+            return 'success';
+        }
+
+        $packageId = xtreamai_packageIdForService($params);
+        if ($packageId < 1) {
+            throw new \RuntimeException('No package selected for renewal.');
+        }
+        $result = \WhmcsXtreamAI\PanelApi::renewLine($panelId, $lineId, $packageId);
+        \WhmcsXtreamAI\ServiceStore::updateStatus(
+            (int) ($params['serviceid'] ?? 0),
+            'Active',
+            isset($result['expires_at']) ? (string) $result['expires_at'] : null
+        );
+        xtreamai_updateNextDueDate((int) ($params['serviceid'] ?? 0), $result, $params);
+        return 'success';
+    });
+}
+
+function xtreamai_ChangePassword(array $params)
+{
+    return xtreamai_execute($params, 'change_password', static function (array $params): string {
+        $panelId = xtreamai_requirePanelId($params);
+        $lineId = xtreamai_lineIdForService($params);
+        $supplied = preg_replace('/[^A-Za-z0-9]/', '', (string) ($params['password'] ?? ''));
+        $newPassword = strlen($supplied) >= 8 ? substr($supplied, 0, 32) : xtreamai_linePassword($params);
+        if (xtreamai_accountType($params) === 'reseller') {
+            \WhmcsXtreamAI\PanelApi::resetResellerPassword($panelId, $lineId, $newPassword);
+        } else {
+            \WhmcsXtreamAI\PanelApi::resetLinePassword($panelId, $lineId, $newPassword);
+        }
+        xtreamai_updateHostingCredentials((int) ($params['serviceid'] ?? 0), '', $newPassword);
+        return 'success';
+    });
+}
+
+function xtreamai_AdminCustomButtonArray(array $params)
+{
+    if (xtreamai_accountType($params) === 'reseller') {
+        return [];
+    }
+    return ['Sync line to panel' => 'sync'];
+}
+
+function xtreamai_sync(array $params)
+{
+    return xtreamai_execute($params, 'sync', static function (array $params): string {
+        if (xtreamai_accountType($params) === 'reseller') {
+            throw new \RuntimeException('Sync is not supported for Sub-Reseller products.');
+        }
+        $panelId = xtreamai_requirePanelId($params);
+        $lineId = xtreamai_lineIdForService($params);
+        $bouquets = xtreamai_selectedBouquets($params);
+        $notes = xtreamai_renderNotes($params);
+        $maxConn = xtreamai_maxConnectionsForService($params);
+
+        $fields = [
+            'bouquets' => $bouquets,
+            'notes' => $notes,
+        ];
+        if ($maxConn > 0) {
+            $fields['max_connections'] = $maxConn;
+        }
+
+        \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
+        return 'success';
+    });
+}
+
+function xtreamai_ChangePackage(array $params)
+{
+    return xtreamai_execute($params, 'change_package', static function (array $params): string {
+        if (xtreamai_accountType($params) === 'reseller') {
+            throw new \RuntimeException('Package changes are not supported for Sub-Reseller products.');
+        }
+
+        $panelId = xtreamai_requirePanelId($params);
+        $lineId = xtreamai_lineIdForService($params);
+        $newPackageId = xtreamai_packageIdForService($params);
+        if ($newPackageId < 1) {
+            throw new \RuntimeException('No package selected for this product.');
+        }
+
+        $currentPackageId = 0;
+        try {
+            $row = \WhmcsXtreamAI\ServiceStore::find((int) ($params['serviceid'] ?? 0));
+            if ($row !== null && isset($row->package_id)) {
+                $currentPackageId = (int) $row->package_id;
+            }
+        } catch (\Throwable $e) {
+            $currentPackageId = 0;
+        }
+
+        if ($currentPackageId > 0 && $currentPackageId !== $newPackageId) {
+            throw new \RuntimeException('Package changes on an existing line are not supported by the panel API. Please terminate and re-provision.');
+        }
+
+        $bouquets = xtreamai_selectedBouquets($params);
+        $notes = xtreamai_renderNotes($params);
+        $maxConn = xtreamai_maxConnectionsForService($params);
+
+        $fields = [
+            'bouquets' => $bouquets,
+            'notes' => $notes,
+        ];
+        if ($maxConn > 0) {
+            $fields['max_connections'] = $maxConn;
+        }
+
+        \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
+
+        return 'success';
+    });
+}
+
+function xtreamai_Suspend(array $params)
+{
+    return xtreamai_SuspendAccount($params);
+}
+
+function xtreamai_Unsuspend(array $params)
+{
+    return xtreamai_UnsuspendAccount($params);
+}
+
+function xtreamai_AdminServicesTabFields(array $params)
+{
+    try {
+        xtreamai_requireAddon();
+        \WhmcsXtreamAI\Settings::ensureTables();
+
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        if ($serviceId < 1) {
+            return [];
+        }
+
+        $row = \WhmcsXtreamAI\ServiceStore::find($serviceId);
+        if (!$row) {
+            return [];
+        }
+
+        $panelName = '';
+        if (!empty($row->panel_id)) {
+            $panel = \WhmcsXtreamAI\PanelStore::find((int) $row->panel_id);
+            if ($panel && !empty($panel->name)) {
+                $panelName = (string) $panel->name;
+            }
+        }
+
+        $expiry = !empty($row->expires_at) ? xtreamai_formatDate((string) $row->expires_at) : '—';
+
+        $activeConnections = '-';
+        if (xtreamai_accountType($params) === 'line'
+            && !empty($row->panel_id)
+            && !empty($row->panel_account_id)
+        ) {
+            try {
+                $activeConnections = (string) count(
+                    \WhmcsXtreamAI\PanelApi::lineConnections(
+                        (int) $row->panel_id,
+                        (string) $row->panel_account_id
+                    )
+                );
+            } catch (\Throwable $e) {
+                $activeConnections = '-';
+            }
+        }
+
+        return [
+            'Panel' => xtreamai_esc($panelName !== '' ? $panelName : (string) $row->panel_id),
+            'Line ID' => xtreamai_esc((string) $row->panel_account_id),
+            'Line Status' => xtreamai_esc((string) $row->status),
+            'Active Connections' => xtreamai_esc($activeConnections),
+            'Panel Expiry' => xtreamai_esc($expiry),
+        ];
+    } catch (\Throwable $e) {
+        return [];
+    }
+}
+
+function xtreamai_ClientArea(array $params)
+{
+    $username = (string) ($params['username'] ?? '');
+    $password = (string) ($params['password'] ?? '');
+    $status = (string) ($params['status'] ?? '');
+    $expires = '—';
+    $m3uUrl = '';
+    $credits = '';
+    $connections = [];
+    $connectionsCount = 0;
+    $accountType = xtreamai_accountType($params);
+
+    try {
+        xtreamai_requireAddon();
+
+        xtreamai_refreshFromPanel($params);
+
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        $row = \WhmcsXtreamAI\ServiceStore::find($serviceId);
+
+        if ($row) {
+            if (!empty($row->username)) {
+                $username = (string) $row->username;
+            }
+            if (!empty($row->status)) {
+                $status = (string) $row->status;
+            }
+            if (!empty($row->expires_at)) {
+                $expires = xtreamai_formatDate((string) $row->expires_at);
+            }
+            if (!empty($row->panel_id)) {
+                $panel = \WhmcsXtreamAI\PanelStore::find((int) $row->panel_id);
+                if ($panel && !empty($panel->m3u_url)) {
+                    $m3uUrl = (string) $panel->m3u_url;
+                }
+            }
+        }
+
+        if ($m3uUrl === '') {
+            $panelId = xtreamai_panelIdForService($params);
+            if ($panelId > 0) {
+                $panel = \WhmcsXtreamAI\PanelStore::find($panelId);
+                if ($panel && !empty($panel->m3u_url)) {
+                    $m3uUrl = (string) $panel->m3u_url;
+                }
+            }
+        }
+
+        if ($accountType === 'reseller') {
+            try {
+                $panelId = xtreamai_panelIdForService($params);
+                $lineId = xtreamai_lineIdForService($params);
+                $credits = \WhmcsXtreamAI\PanelApi::resellerCredits($panelId, $lineId);
+            } catch (\Throwable $e) {
+                $credits = '';
+            }
+        }
+
+        if ($accountType === 'line' && $row && !empty($row->panel_id) && !empty($row->panel_account_id)) {
+            try {
+                $connections = \WhmcsXtreamAI\PanelApi::lineConnections(
+                    (int) $row->panel_id,
+                    (string) $row->panel_account_id
+                );
+                foreach ($connections as $index => $connection) {
+                    $connections[$index]['duration'] = xtreamai_formatDuration(
+                        (int) ($connection['elapsed_sec'] ?? 0)
+                    );
+                }
+            } catch (\Throwable $e) {
+                $connections = [];
+            }
+        }
+        $connectionsCount = count($connections);
+    } catch (\Throwable $e) {
+
+    }
+
+    return [
+        'tabOverviewReplacementTemplate' => 'templates/overview.tpl',
+        'templateVariables' => [
+            'username' => $username,
+            'password' => $password,
+            'status' => $status,
+            'expires' => $expires,
+            'm3u_url' => $m3uUrl,
+            'credits' => $credits,
+            'account_type' => $accountType,
+            'connections' => $connections,
+            'connections_count' => $connectionsCount,
+        ],
+    ];
+}
