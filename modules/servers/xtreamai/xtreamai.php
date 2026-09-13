@@ -1077,23 +1077,32 @@ function xtreamai_ChangePackage(array $params)
             $currentPackageId = 0;
         }
 
-        if ($currentPackageId > 0 && $currentPackageId !== $newPackageId) {
-            throw new \RuntimeException('Package changes on an existing line are not supported by the panel API. Please terminate and re-provision.');
+        $packageChanged = $currentPackageId > 0 && $currentPackageId !== $newPackageId;
+
+        if ($packageChanged && \WhmcsXtreamAI\PanelApi::keyType($panelId) !== 'admin') {
+            throw new \RuntimeException('Changing the panel package requires an admin panel key. With a reseller key, terminate and re-provision the service.');
         }
 
         $bouquets = xtreamai_selectedBouquets($params);
         $notes = xtreamai_renderNotes($params);
         $maxConn = xtreamai_maxConnectionsForService($params);
 
-        $fields = [
-            'bouquets' => $bouquets,
-            'notes' => $notes,
-        ];
+        $fields = ['notes' => $notes];
+        if ($bouquets !== []) {
+            $fields['bouquets'] = $bouquets;
+        }
+        if ($packageChanged) {
+            $fields['package_id'] = $newPackageId;
+        }
         if ($maxConn > 0) {
             $fields['max_connections'] = $maxConn;
         }
 
         \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
+
+        if ($packageChanged) {
+            \WhmcsXtreamAI\ServiceStore::setPackageId((int) ($params['serviceid'] ?? 0), $newPackageId);
+        }
 
         return 'success';
     });

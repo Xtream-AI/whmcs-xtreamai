@@ -47,6 +47,16 @@ final class ServiceStore
 
     
 
+    public static function setPackageId(int $serviceId, int $packageId): void
+    {
+        Capsule::table(self::TABLE)->where('service_id', $serviceId)->update([
+            'package_id' => $packageId,
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+    }
+
+    
+
     public static function updateStatus(int $serviceId, string $status, ?string $expiresAt = null): void
     {
         $data = [

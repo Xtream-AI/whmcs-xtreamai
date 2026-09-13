@@ -71,7 +71,7 @@ The "panel" is the Xtream AI server the module will work with.
 | **API URL** | The web address of your panel. | For example: `https://panel.example.com` (no trailing slash). |
 | **M3U URL** | *Optional.* The M3U link your client will see to play the IPTV. | You can leave it empty if you don't use it. |
 | **Access key** | Your API key (the panel's secret key). It is stored **encrypted**. | Paste it here. |
-| **Key type** | Whether the key you just pasted is a **Reseller** key or an **Admin** key. | Choose **Reseller** for line-only setups. Choose **Admin** if you plan to sell Sub-Reseller products. |
+| **Key type** | Whether the key you just pasted is a **Reseller** key or an **Admin** key. | Choose **Reseller** for line-only setups. Choose **Admin** if you plan to sell Sub-Reseller products, or if you want WHMCS product upgrades and downgrades to change the panel package of a live line. |
 | **Admin owner member_id** | The panel member id that will own the lines created through this panel entry. Only required when **Key type** is **Admin**. | Enter the numeric member id. Leave empty for a Reseller key. |
 | **SSL verification** | Whether to check your panel's security certificate. | Leave it **on**, unless your panel has a broken certificate. |
 | **Panel status** | Whether this panel is active. | Leave it on so you can use it. |
@@ -112,7 +112,7 @@ Now create the product you want to sell.
 | **Bouquets** | The channels/content packages the line will have. | Tick them with the checkboxes. |
 | **Account Type** | What kind of access is created. | `Line (default)` for a normal IPTV line, or `Sub-Reseller` for a reseller account. |
 | **Credits** | Starting credits. **Only** used for `Sub-Reseller`. | For example `100`. For `Line`, leave it at `0`. |
-| **Max Connections** | Maximum concurrent connections per line. Only takes effect when the panel uses an **Admin** key; **Reseller** keys ignore this. | Leave `0` to use the package default. Any value between `1` and `100` to override. |
+| **Max Connections** | Maximum concurrent connections per line. Only takes effect when the panel uses an **Admin** key; **Reseller** keys ignore this. | Leave `0` to use the package default. Any value between `1` and `100` to override. The number is absolute and means the same everywhere: when the line is created, when you press Sync, and on a product change. |
 | **Sub-Reseller Member Group ID** | Numeric id of the panel member group new Sub-Reseller accounts will belong to. Only used when **Account Type** is `Sub-Reseller` and the panel key is **Admin**; reseller keys inherit the group from their sub-reseller setup. | For example `4`. |
 
 **What happens when WHMCS creates the service:**
@@ -159,7 +159,12 @@ These are the actions you will take as an administrator and what they do in the 
 **Product upgrade or downgrade.** When you change the WHMCS product of a service, the module handles it automatically:
 
 - **Same panel package, different bouquets or max connections:** the module pushes the new values to the existing line in the panel.
-- **Different panel package:** the panel API cannot swap packages on a live line. The module refuses the change with a clear error message. To move a customer to a different panel package, terminate the current service and re-provision the new product.
+- **Different panel package, panel with an Admin key:** the module applies the new package to the same line. The customer keeps their username, password and expiry date, nothing is charged in credits, and the new product's bouquets and notes are applied at the same time. **Max Connections** is sent exactly as the product has it, the same absolute number used when the line is created. The restreamer flag follows the new package.
+- **Different panel package, panel with a Reseller key:** the module refuses the change with a clear message. To move that customer to a different panel package, terminate the current service and re-provision the new product, or switch the panel entry to an Admin key.
+
+**The bouquets of the new product have to belong to the new package.** If one of them does not, the panel refuses the change and tells you which ids are wrong: nothing is applied to the line and the service stays on its previous panel package. Fix the product's Bouquets field and try again, or leave it empty so the line gets every bouquet of the new package.
+
+Package changes need your panel to have been updated on or after **2026-09-14**. On an older panel the change is **not** applied: the line keeps its original package, only the bouquets, notes and connections are pushed, and WHMCS still reports success and records the new product.
 
 ---
 
@@ -238,7 +243,7 @@ When you're done, click **Save Settings**.
 ## 11. Frequently asked questions
 
 **Do I need to be a panel administrator?**
-For Line products, no. For Sub-Reseller products, yes: the panel key must be an admin key.
+For Line products, no. For Sub-Reseller products, yes: the panel key must be an admin key. Changing the panel package of a line that is already running (a WHMCS product upgrade or downgrade) also needs an admin key; with a reseller key you terminate the service and re-provision it.
 
 **Are my passwords safe?**
 Yes. API keys are stored **encrypted** with WHMCS's own encryption, and they never appear in the logs or in error messages.

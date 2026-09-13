@@ -173,7 +173,7 @@ final class PanelApi
     public static function updateLine(int $panelId, string $lineId, array $fields): array
     {
         $keyType = self::keyType($panelId);
-        $adminOnly = ['max_connections', 'exp_date', 'is_restreamer', 'allowed_ips', 'allowed_ua', 'is_isplock'];
+        $adminOnly = ['package_id', 'max_connections', 'exp_date', 'is_restreamer', 'allowed_ips', 'allowed_ua', 'is_isplock'];
         $bothTypes = ['bouquets', 'notes'];
 
         $body = [];
@@ -196,6 +196,9 @@ final class PanelApi
                     continue;
                 }
                 switch ($key) {
+                    case 'package_id':
+                        $body['package_id'] = (int) $value;
+                        break;
                     case 'max_connections':
                         $body['max_connections'] = (int) $value;
                         break;

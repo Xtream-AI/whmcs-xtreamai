@@ -16,10 +16,12 @@ the lifecycle:
   `exp_date`, `is_restreamer`, `allowed_ips`, `allowed_ua`,
   `is_isplock`).
 - Product changes: when a WHMCS service switches products, the module
-  calls the panel `update` endpoint when only config options changed
-  (bouquets, notes, `max_connections`). Swapping to a different panel
-  package (different `package_id`) requires manual re-provisioning and
-  the operation is refused with a clear error.
+  calls the panel `update` endpoint. When only config options changed
+  (bouquets, notes, `max_connections`) it pushes those. When the new
+  product points at a different panel package, an **admin** key swaps
+  the package on the live line without renewing it and without spending
+  credits; a reseller key is refused with a clear error and the service
+  has to be terminated and re-provisioned.
 - Next-due-date sync on create and renew (skipped for one-time and free
   billing cycles).
 - Client-area card with credentials, M3U URL and active connections.
@@ -65,6 +67,7 @@ which parts of the module light up:
 | Operation | Reseller key | Admin key |
 |---|---|---|
 | Line products (create / suspend / unsuspend / renew / password / terminate) | Yes (owner inferred from the key) | Yes, with `Admin owner member_id` set on the panel entry |
+| Change the panel package of a live line (WHMCS product upgrade or downgrade) | No (terminate and re-provision) | Yes, without renewing the line or spending credits |
 | Catalog (packages, bouquets, streams, VOD), `me` | Yes | Yes |
 | Create sub-reseller | Yes | Yes |
 | Sub-Reseller product lifecycle (reset password/credits) | No (403) | Yes |
@@ -93,6 +96,11 @@ require an admin key.
 - MySQL or MariaDB, as used by WHMCS.
 - Xtream AI Panel 2.1.2 or newer (`PANEL_API_ENABLED=true` in the
   panel configuration). The Public API is required.
+- Changing the panel package of a live line additionally requires a
+  panel updated on or after **2026-09-14**. An earlier panel accepts
+  the request, applies only bouquets, notes and `max_connections`, and
+  leaves the package as it was, while WHMCS still records the new
+  product. Upgrade the panel before you rely on this.
 
 ## Obtaining an API key
 
@@ -138,7 +146,9 @@ Keep the token safe: paste it into the WHMCS addon in the next step.
 The **Max Connections** field caps the number of concurrent connections
 per line. Leave it at `0` to keep the package default. Non-zero values
 apply only when the panel entry uses an **Admin** key; reseller keys
-silently ignore this field.
+silently ignore this field. The value is absolute and behaves the same
+everywhere: on creation, on **Sync line to panel**, and on a product
+change that swaps the panel package.
 
 ## Provisioning modes
 
@@ -161,10 +171,34 @@ Set the mode per product with the **Account Type** config option:
 different WHMCS product, the module handles it via the panel's `update`
 endpoint. If the new product uses the same panel package, the module
 pushes the new bouquets, notes and `max_connections` to the line
-without recreating it. If the new product uses a different panel
-package, the module refuses the change with a clear message: the panel
-API does not support swapping packages on a live line, so you terminate
-the service and re-provision with the new product.
+without recreating it.
+
+If the new product uses a different panel package, the panel entry
+decides what happens:
+
+- **Admin key:** the module applies the new package to the live line,
+  together with the new product's bouquets and notes. The line keeps
+  its username, password and expiry date, and the change costs no
+  credits. Connections follow the new package unless the product sets
+  **Max Connections**, which is sent as an absolute value exactly as it
+  is on creation. `is_restreamer` follows the new package. The WHMCS
+  service is repointed to the new package so later renewals use it.
+- **Reseller key:** the module refuses the change with a clear message
+  and the service has to be terminated and re-provisioned with the new
+  product. Package changes are an admin-only operation on the panel,
+  because a reseller could otherwise move a line to a richer package
+  without paying for it.
+
+The bouquets configured on the new WHMCS product must belong to the
+destination package. If any of them does not, the panel rejects the
+change and lists the offending ids, nothing is applied to the line, and
+the service keeps its previous panel package. Leave the product's
+**Bouquets** field empty to hand the line the full bouquet list of the
+new package.
+
+Package changes need a panel updated on or after **2026-09-14**. An
+older panel silently keeps the line on its previous package even though
+WHMCS reports success and records the new product.
 
 Keep the WHMCS billing cycle aligned with the panel package duration.
 Renewals sync WHMCS's next due date to the panel expiry, so a 30-day
