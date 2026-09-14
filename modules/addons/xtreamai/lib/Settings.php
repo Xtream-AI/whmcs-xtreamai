@@ -11,6 +11,7 @@ final class Settings
     private const TABLE = 'mod_xtreamai_settings';
     private const SERVICES_TABLE = 'mod_xtreamai_services';
     private const PANELS_TABLE = 'mod_xtreamai_panels';
+    private const LINE_INDEX_TABLE = 'mod_xtreamai_line_index';
 
     
 
@@ -61,6 +62,20 @@ final class Settings
                 $table->string('last_checked', 32)->nullable();
                 $table->string('last_user', 190)->nullable();
                 $table->timestamp('created_at')->nullable();
+            });
+        }
+
+        if (!$schema->hasTable(self::LINE_INDEX_TABLE)) {
+            $schema->create(self::LINE_INDEX_TABLE, static function ($table): void {
+                $table->increments('id');
+                $table->unsignedInteger('panel_id');
+                $table->string('line_id', 64);
+                $table->string('username', 64)->default('');
+                $table->unsignedInteger('service_tag')->nullable();
+                $table->bigInteger('exp_date')->nullable();
+                $table->tinyInteger('enabled')->default(0);
+                $table->timestamp('indexed_at')->nullable();
+                $table->unique(['panel_id', 'line_id']);
             });
         }
 
@@ -176,6 +191,124 @@ final class Settings
         }
 
         return $out;
+    }
+
+    
+
+    public static function serviceTagPattern(?string $template = null): ?string
+    {
+        if ($template === null) {
+            $template = self::get('reseller_notes', self::credentialDefaults()['reseller_notes']);
+        }
+
+        $template = trim((string) $template);
+        if ($template === '') {
+            $template = self::credentialDefaults()['reseller_notes'];
+        }
+
+        $tagOpen  = preg_quote('{', '/');
+        $tagClose = preg_quote('}', '/');
+
+        $pattern = preg_quote($template, '/');
+        $pattern = str_replace($tagOpen . 'service_id' . $tagClose, '(\d+)', $pattern);
+        $pattern = preg_replace(
+            '/' . preg_quote($tagOpen, '/') . '[^{}]*' . preg_quote($tagClose, '/') . '/',
+            '.*?',
+            $pattern
+        );
+
+        if ($pattern === null || strpos($pattern, '(\d+)') === false) {
+            return null;
+        }
+
+        return $pattern;
+    }
+
+    
+
+    public static function serviceTagFromNotes(string $notes, ?string $template = null): ?int
+    {
+        $pattern = self::serviceTagPattern($template);
+        if ($pattern === null) {
+            return null;
+        }
+
+        if (preg_match('/' . $pattern . '/', $notes, $matches) !== 1) {
+            return null;
+        }
+
+        if (!isset($matches[1]) || !ctype_digit($matches[1])) {
+            return null;
+        }
+
+        return (int) $matches[1];
+    }
+
+    
+
+    public static function preferredLineMatch(array $matches, string $username): ?array
+    {
+        if ($matches === []) {
+            return null;
+        }
+
+        $username = trim($username);
+        if ($username !== '') {
+            foreach ($matches as $match) {
+                $candidate = isset($match['username']) ? $match['username'] : '';
+                if (trim((string) $candidate) === $username) {
+                    return $match;
+                }
+            }
+        }
+
+        $best = null;
+        foreach ($matches as $match) {
+            if ($best === null) {
+                $best = $match;
+                continue;
+            }
+            $current = isset($match['exp_date']) ? (int) $match['exp_date'] : 0;
+            $bestExp = isset($best['exp_date']) ? (int) $best['exp_date'] : 0;
+            if ($current > $bestExp) {
+                $best = $match;
+            }
+        }
+
+        return $best;
+    }
+
+    
+
+    public static function chooseLineMatch(array $tagMatches, array $usernameMatches, string $username): ?array
+    {
+        if (count($tagMatches) > 1) {
+            $sameUser = false;
+            $username = trim($username);
+            if ($username !== '') {
+                foreach ($tagMatches as $candidate) {
+                    if (trim((string) ($candidate['username'] ?? '')) === $username) {
+                        $sameUser = true;
+                        break;
+                    }
+                }
+            }
+            if (!$sameUser) {
+                return ['line' => null, 'source' => 'ambiguous', 'candidates' => $tagMatches];
+            }
+        }
+
+        $match = self::preferredLineMatch($tagMatches, $username);
+        if ($match !== null) {
+            return ['line' => $match, 'source' => 'tag'];
+        }
+
+        $match = self::preferredLineMatch($usernameMatches, $username);
+        if ($match !== null) {
+            return ['line' => $match, 'source' => 'username'];
+        }
+
+        return null;
     }
 
     

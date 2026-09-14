@@ -59,6 +59,41 @@ account on the panel:
   toggle, prefix, length, character type, live preview) and the line
   notes template with documented tags and a live example.
 
+### Bulk tools
+
+The addon has a **Bulk tools** view for operations that touch many
+services at once. It runs from the browser in batches (100 services for
+linking, 20 for syncing), shows a progress bar, a counter per outcome
+and a result row per service (service id, client, username, outcome and
+message). Every operation is idempotent: running it again never
+duplicates rows and never breaks a link that already exists.
+
+1. **Index panel lines.** Reads every line of the selected panel and
+   stores it locally in `mod_xtreamai_line_index` (line id, username,
+   expiry, status and the WHMCS service id parsed from the line notes
+   with the **Line Notes Template**, `WHMCS:{service_id}` by default).
+   Read-only on the panel. The first batch of a run replaces the
+   previous index of that panel.
+2. **Link existing services.** Matches WHMCS services that have no panel
+   line recorded yet against that index: first by the notes tag
+   (`service_tag = tblhosting.id`), then by the panel username. On a
+   match it writes the `mod_xtreamai_services` row, records the status
+   and expiry, and fills the service username (and password, encrypted)
+   when WHMCS has none. Sub-Reseller products and services whose product
+   belongs to another panel are skipped and reported as such.
+3. **Sync all services.** Calls the server module's `sync` for every
+   linked, active service of the panel through WHMCS's local API, so the
+   connection count (including the `extra_connections` configurable
+   option), bouquets and notes are recomputed exactly as when you press
+   **Sync line to panel** on a single service.
+
+Use the Bulk tools when you migrate services from another WHMCS module
+(the panel lines already exist and carry the `WHMCS:<service id>` tag in
+their notes, so indexing plus linking rebuilds every link without
+creating new lines), and after you change a product config option or a
+configurable option that affects many services at once and want the new
+connection count applied to all of them.
+
 ## Who it's for
 
 Resellers and panel administrators. Which panel API key you use decides

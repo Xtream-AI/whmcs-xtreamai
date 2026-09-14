@@ -94,7 +94,11 @@ final class PanelApi
 
     public static function packageMaxConnections(int $panelId, int $packageId): int
     {
-        foreach (self::packages($panelId) as $package) {
+        static $cache = [];
+        if (!isset($cache[$panelId])) {
+            $cache[$panelId] = self::packages($panelId);
+        }
+        foreach ($cache[$panelId] as $package) {
             if ((int) $package['id'] === $packageId) {
                 return (int) $package['max_connections'];
             }
@@ -301,8 +305,11 @@ final class PanelApi
             return [
                 'id' => (string) self::value($line, 'id', ''),
                 'username' => (string) self::value($line, 'username', ''),
+                'password' => (string) self::value($line, 'password', ''),
                 'enabled' => (bool) self::value($line, 'enabled', false),
                 'expires_at' => self::expiryFrom($line),
+                'notes' => (string) self::value($line, 'notes', ''),
+                'email' => (string) self::value($line, 'email', ''),
             ];
         });
     }
@@ -632,6 +639,9 @@ final class PanelApi
                     'is_trial' => (bool) self::value($line, 'is_trial', false),
                     'max_connections' => (int) self::value($line, 'max_connections', 0),
                     'expires_at' => self::expiryFrom($line),
+                    'exp_date' => self::nullableInt($line, 'exp_date'),
+                    'notes' => (string) self::value($line, 'notes', ''),
+                    'email' => (string) self::value($line, 'email', ''),
                 ];
             }
 

@@ -179,7 +179,57 @@ Package changes need your panel to have been updated on or after **2026-09-14**.
 
 ---
 
-## 8. Sub-Reseller products, explained simply
+## 8. Bulk tools
+
+The **Bulk tools** tab (**Addons → Xtream AI Panel → Bulk tools**) does three jobs that would otherwise mean editing services one by one. They run in batches in your browser (100 lines per request when indexing, 100 services when linking, 20 when syncing) and show a progress bar, a counter for each result and one row per service. They are safe to run again: nothing is ever duplicated and nothing is deleted from the panel. If a run stops halfway (the panel went away, the browser tab was closed), just run it again: indexing starts over from scratch, and linking refuses to run until the index has been completed once.
+
+The **Panel** dropdown at the top decides which panel everything below works on. Change it and the page reloads on that panel.
+
+### 8.1 Index panel lines
+
+This reads the lines that already exist on the panel and keeps a local copy of them: line id, username, expiry, status, and the WHMCS service number found in the line notes.
+
+1. Choose the panel in the **Panel** dropdown.
+2. In the first card, click **Index lines**.
+3. Wait for the progress bar to finish. The counters tell you how many lines were read and how many are in the local index now.
+
+Run this before the other two tools. It only reads from the panel, so it changes nothing there. If you run it again, the index of that panel is rebuilt from scratch.
+
+### 8.2 Link existing services
+
+This connects WHMCS services that have no panel line recorded yet to the lines that already exist. It looks for the **service number in the line notes** first (the **Line Notes Template** of General Settings, `WHMCS:{service_id}` by default) and falls back to the **username**.
+
+1. Choose the panel and run **Index panel lines** first.
+2. Tick **Include Pending, Terminated and Cancelled services** only if you want those services linked too. Normally they are left out.
+3. Click **Link services** and watch the results table fill in.
+
+For every service you get one row with the service id, the client, the username and the outcome:
+
+| Outcome | What it means |
+|---|---|
+| `linked_by_tag` | The notes of a panel line contain this service number. The most reliable match. |
+| `linked_by_username` | The service username matches the line username. No tag was found. |
+| `not_found` | No line matched. The service was not touched. |
+| `ambiguous_tag` | Several lines carry this service number and none of them has the service's username. Nothing was linked, so the wrong line is never picked: set the username on the WHMCS service (or fix the notes on the panel) and run again. The message lists the line ids. |
+| `skipped_sub_reseller` | The product is a Sub-Reseller product: there is no line to link. |
+| `skipped_other_panel` | The product points at another panel, so it was left for a run on that panel. |
+| `error` | Something failed. The message column explains what. |
+
+Nothing is created or deleted on the panel: this tool only restores the link between WHMCS and the line.
+
+### 8.3 Sync all services
+
+This runs the same action as the **Sync line to panel** button on each service, but for all of them at once: the bouquets, the notes and the connection count (Max Connections plus any connections configurable option such as `extra_connections`) of each product are recalculated and pushed to its line on the panel.
+
+1. Choose the panel. (Linking is not required to have run in the same session, but the services do need a linked line.)
+2. Tick **Include Suspended services** if suspended services should be updated too.
+3. Click **Sync services**.
+
+**Warning:** this writes to **every active linked line** of the selected panel, one by one, with the configuration of its product. Run it when the product configuration is final. Use it after you change a connection configurable option (or a product's Max Connections) so the new count reaches every customer line. Services whose product is a Sub-Reseller are reported as `skipped_sub_reseller`, and the results table marks every other service as `synced` or `error`.
+
+---
+
+## 9. Sub-Reseller products, explained simply
 
 **What they are for:** a Sub-Reseller product gives your customer their **own reseller account** on the panel, with their **own credits**. This lets your customer resell lines on their own.
 
@@ -198,7 +248,7 @@ You don't need to choose Package or Bouquets for this type: the module ignores t
 
 ---
 
-## 9. All the addon screens, one by one
+## 10. All the addon screens, one by one
 
 Inside **Addons → Xtream AI Panel** you have these tabs:
 
@@ -211,6 +261,8 @@ Inside **Addons → Xtream AI Panel** you have these tabs:
 **Lines** — to search for lines. You can filter by **username** (the "Username contains…" field) and by **status** (All statuses / Enabled / Disabled).
 
 **Catalog** — to see what is on your panel: **Live Streams** (live channels) and **VOD** (movies and series). Each has its own search box.
+
+**Bulk tools** — the three operations that work on many services at once: **Index panel lines**, **Link existing services** and **Sync all services**. See section 8.
 
 **Module Logs** — a history of what the module has done (each call to the panel API), with date, action and a short summary.
 
@@ -235,7 +287,7 @@ When you're done, click **Save Settings**.
 
 ---
 
-## 10. Common problems
+## 11. Common problems
 
 | Message you might see | What it means | What to do |
 |---|---|---|
@@ -251,7 +303,7 @@ When you're done, click **Save Settings**.
 
 ---
 
-## 11. Frequently asked questions
+## 12. Frequently asked questions
 
 **Do I need to be a panel administrator?**
 For Line products, no. For Sub-Reseller products, yes: the panel key must be an admin key. Changing the panel package of a line that is already running (a WHMCS product upgrade or downgrade) also needs an admin key; with a reseller key you terminate the service and re-provision it.
@@ -261,6 +313,9 @@ Yes. API keys are stored **encrypted** with WHMCS's own encryption, and they nev
 
 **Can I have several panels?**
 Yes. Add as many as you want in Panels, and choose which one each product uses.
+
+**I migrated from another module, how do I connect my existing services?**
+Go to **Addons → Xtream AI Panel → Bulk tools**, choose your panel in the dropdown, click **Index lines** in the first card and, when it finishes, click **Link services** in the second card. Each service is matched to its line by the WHMCS service number stored in the line notes (template `WHMCS:{service_id}`) or, if there is no tag, by the username: the link is restored without creating, changing or deleting anything on the panel. Afterwards you can run **Sync services** in the third card so every line picks up the bouquets and the connection count of its product.
 
 **Can my customers choose how many connections they want?**
 Yes. Add a WHMCS Configurable Option named `extra_connections` (a quantity from 0 upwards, priced per unit) to the product and the module adds it on top of the package's connections, on order and every time the customer changes it later. See "Letting customers buy extra connections" in section 5.
@@ -273,7 +328,7 @@ No, the module is free and open source (MIT).
 
 ---
 
-## 12. Uninstalling
+## 13. Uninstalling
 
 1. In **System Settings → Addon Modules**, find **Xtream AI Panel** and click **Deactivate**. Your data is **kept**, in case you want to reactivate it later.
 2. To remove it completely, delete the two folders using the File Manager or FTP:

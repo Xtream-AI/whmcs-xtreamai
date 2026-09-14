@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.2.0',
+        'version'     => '1.3.0',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -63,6 +63,18 @@ function xtreamai_output($vars)
         xtreamai_ajax_test_connection();
     }
 
+    if ($action === 'ajax_bulk_index') {
+        xtreamai_ajax_bulk_index();
+    }
+
+    if ($action === 'ajax_bulk_link') {
+        xtreamai_ajax_bulk_link();
+    }
+
+    if ($action === 'ajax_bulk_sync') {
+        xtreamai_ajax_bulk_sync();
+    }
+
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!xtreamai_check_csrf()) {
             xtreamai_flash('error', 'Invalid security token. Please try again.');
@@ -74,7 +86,7 @@ function xtreamai_output($vars)
     $flash = xtreamai_consume_flash();
 
     $view = isset($_REQUEST['view']) ? (string) $_REQUEST['view'] : 'dashboard';
-    $allowedViews = ['dashboard', 'list', 'settings', 'logs', 'resellers', 'lines', 'catalog'];
+    $allowedViews = ['dashboard', 'list', 'settings', 'logs', 'resellers', 'lines', 'catalog', 'bulk'];
     if (!in_array($view, $allowedViews, true)) {
         $view = 'dashboard';
     }
@@ -286,6 +298,15 @@ function xtreamai_delete_panel()
         throw new \RuntimeException('Panel not found.');
     }
     \WhmcsXtreamAI\PanelStore::delete($id);
+    \WHMCS\Database\Capsule::table('mod_xtreamai_line_index')->where('panel_id', $id)->delete();
+    \WhmcsXtreamAI\Settings::set('line_index_complete_' . $id, '0');
+}
+
+function xtreamai_bulk_require_post(): void
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => 'This action requires a POST request.']);
+    }
 }
 
 function xtreamai_adjust_credits(): string
@@ -371,6 +392,458 @@ function xtreamai_ajax_test_connection()
     }
 }
 
+function xtreamai_ajax_bulk_index()
+{
+    header('Content-Type: application/json; charset=utf-8');
+
+    if (!xtreamai_check_csrf()) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => 'Invalid security token.']);
+    }
+
+    xtreamai_bulk_require_post();
+
+    $panelId = (int) ($_REQUEST['panel_id'] ?? 0);
+    $cursor  = xtreamai_clean_cursor($_REQUEST['cursor'] ?? '');
+
+    if ($panelId < 1) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => 'Select a panel first.']);
+    }
+
+    try {
+        $page = \WhmcsXtreamAI\PanelApi::linesPage($panelId, null, null, $cursor !== '' ? $cursor : null);
+
+        if ($cursor === '') {
+            \WHMCS\Database\Capsule::table('mod_xtreamai_line_index')
+                ->where('panel_id', $panelId)
+                ->delete();
+            \WhmcsXtreamAI\Settings::set('line_index_complete_' . $panelId, '0');
+        }
+
+        $indexed = 0;
+        $now     = date('Y-m-d H:i:s');
+        foreach ($page['items'] as $line) {
+            $lineId = isset($line['id']) ? (string) $line['id'] : '';
+            if ($lineId === '' || (int) $lineId < 1) {
+                continue;
+            }
+
+            $expDate = (isset($line['exp_date']) && $line['exp_date'] !== null)
+                ? (int) $line['exp_date']
+                : null;
+
+            \WHMCS\Database\Capsule::table('mod_xtreamai_line_index')->updateOrInsert(
+                ['panel_id' => $panelId, 'line_id' => $lineId],
+                [
+                    'username'    => (string) ($line['username'] ?? ''),
+                    'service_tag' => \WhmcsXtreamAI\Settings::serviceTagFromNotes((string) ($line['notes'] ?? '')),
+                    'exp_date'    => $expDate,
+                    'enabled'     => !empty($line['enabled']) ? 1 : 0,
+                    'indexed_at'  => $now,
+                ]
+            );
+            $indexed++;
+        }
+
+        $next  = $page['next_cursor'];
+        $total = (int) \WHMCS\Database\Capsule::table('mod_xtreamai_line_index')
+            ->where('panel_id', $panelId)
+            ->count();
+
+        if ($next === null) {
+            \WhmcsXtreamAI\Settings::set('line_index_complete_' . $panelId, '1');
+        }
+
+        xtreamai_json([
+            'ok'            => true,
+            'done'          => $next === null,
+            'next_cursor'   => $next,
+            'indexed'       => $indexed,
+            'total_indexed' => $total,
+        ]);
+    } catch (\Throwable $e) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => xtreamai_safe_message($e)]);
+    }
+}
+
+function xtreamai_ajax_bulk_link()
+{
+    header('Content-Type: application/json; charset=utf-8');
+
+    if (!xtreamai_check_csrf()) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => 'Invalid security token.']);
+    }
+
+    xtreamai_bulk_require_post();
+
+    $panelId    = (int) ($_REQUEST['panel_id'] ?? 0);
+    $afterId    = (int) ($_REQUEST['after_id'] ?? 0);
+    $includeAll = ((string) ($_REQUEST['include_all'] ?? '0')) === '1';
+
+    if ($panelId < 1) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => 'Select a panel first.']);
+    }
+
+    try {
+        $indexCount = (int) \WHMCS\Database\Capsule::table('mod_xtreamai_line_index')
+            ->where('panel_id', $panelId)
+            ->count();
+        if ($indexCount < 1) {
+            xtreamai_json([
+                'ok'      => false,
+                'done'    => true,
+                'message' => 'No indexed lines for this panel. Run Index panel lines first.',
+            ]);
+        }
+        if (\WhmcsXtreamAI\Settings::get('line_index_complete_' . $panelId, '0') !== '1') {
+            xtreamai_json([
+                'ok'      => false,
+                'done'    => true,
+                'message' => 'The index of this panel is incomplete (the last run did not reach the end). Run Index panel lines again before linking.',
+            ]);
+        }
+
+        $batchSize = 100;
+
+        $query = \WHMCS\Database\Capsule::table('tblhosting')
+            ->join('tblproducts', 'tblproducts.id', '=', 'tblhosting.packageid')
+            ->leftJoin('tblclients', 'tblclients.id', '=', 'tblhosting.userid')
+            ->leftJoin('mod_xtreamai_services', 'mod_xtreamai_services.service_id', '=', 'tblhosting.id')
+            ->where('tblproducts.servertype', 'xtreamai')
+            ->where('tblhosting.id', '>', $afterId)
+            ->where(function ($nested) {
+                $nested->whereNull('mod_xtreamai_services.service_id')
+                    ->orWhereNull('mod_xtreamai_services.panel_account_id')
+                    ->orWhere('mod_xtreamai_services.panel_account_id', '');
+            });
+
+        if (!$includeAll) {
+            $query->whereIn('tblhosting.domainstatus', ['Active', 'Suspended']);
+        }
+
+        $rows = $query->orderBy('tblhosting.id', 'asc')
+            ->limit($batchSize)
+            ->select([
+                'tblhosting.id as service_id',
+                'tblhosting.username as hosting_username',
+                'tblhosting.domainstatus as domainstatus',
+                'tblclients.firstname as firstname',
+                'tblclients.lastname as lastname',
+                'tblproducts.configoption1 as panel_option',
+                'tblproducts.configoption2 as package_option',
+                'tblproducts.configoption5 as type_option',
+            ])
+            ->get();
+
+        $counts  = [];
+        $results = [];
+        $lastId  = $afterId;
+
+        foreach ($rows as $row) {
+            $serviceId   = (int) $row->service_id;
+            $lastId      = $serviceId;
+            $client      = trim(((string) $row->firstname) . ' ' . ((string) $row->lastname));
+            $hostingUser = trim((string) $row->hosting_username);
+            $outcome     = 'not_found';
+            $message     = 'No indexed line matched this service.';
+            $username    = $hostingUser;
+
+            try {
+                if (strtolower(trim((string) $row->type_option)) === 'reseller') {
+                    $outcome = 'skipped_sub_reseller';
+                    $message = 'Sub-Reseller product: nothing to link.';
+                } else {
+                    $servicePanelId = (int) $row->panel_option;
+                    if ($servicePanelId < 1) {
+                        $servicePanelId = xtreamai_bulk_first_panel_id();
+                    }
+
+                    if ($servicePanelId !== $panelId) {
+                        $outcome = 'skipped_other_panel';
+                        $message = 'This product belongs to another panel.';
+                    } else {
+                        $tagMatches  = xtreamai_bulk_index_rows($panelId, 'service_tag', $serviceId);
+                        $userMatches = $hostingUser !== ''
+                            ? xtreamai_bulk_index_rows($panelId, 'username', $hostingUser)
+                            : [];
+
+                        $match = \WhmcsXtreamAI\Settings::chooseLineMatch($tagMatches, $userMatches, $hostingUser);
+
+                        if ($match === null) {
+                            $outcome = 'not_found';
+                            $message = 'No indexed line matched this service.';
+                        } elseif ($match['source'] === 'ambiguous') {
+                            $ids = [];
+                            foreach ($match['candidates'] as $candidate) {
+                                $ids[] = (string) ($candidate['line_id'] ?? '');
+                            }
+                            $outcome = 'ambiguous_tag';
+                            $message = 'Several lines carry this service tag (' . implode(', ', $ids) . ') and none matches the service username. Set the username on the service or fix the notes on the panel, then run again.';
+                        } else {
+                            $line         = $match['line'];
+                            $lineId       = (string) ($line['line_id'] ?? '');
+                            $lineUsername = (string) ($line['username'] ?? '');
+                            $credentialNote = '';
+
+                            if ($hostingUser === '' && $lineId !== '') {
+                                $panelLine = \WhmcsXtreamAI\PanelApi::getLine($panelId, $lineId);
+                                $credentialNote = xtreamai_bulk_hosting_credentials(
+                                    $serviceId,
+                                    (string) ($panelLine['username'] ?? ''),
+                                    (string) ($panelLine['password'] ?? '')
+                                );
+                            }
+
+                            \WhmcsXtreamAI\ServiceStore::link(
+                                $serviceId,
+                                $panelId,
+                                $lineId,
+                                $lineUsername,
+                                (int) $row->package_option
+                            );
+                            \WhmcsXtreamAI\ServiceStore::updateStatus(
+                                $serviceId,
+                                strtolower((string) $row->domainstatus) === 'suspended' ? 'Suspended' : 'Active',
+                                xtreamai_bulk_expiry($line['exp_date'] ?? null)
+                            );
+
+                            $username = $lineUsername;
+                            if ($match['source'] === 'tag') {
+                                $outcome = 'linked_by_tag';
+                                $message = 'Matched the notes tag to line ' . $lineId . '.' . $credentialNote;
+                            } else {
+                                $outcome = 'linked_by_username';
+                                $message = 'Matched the panel username to line ' . $lineId . '.' . $credentialNote;
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                $outcome = 'error';
+                $message = xtreamai_safe_message($e);
+            }
+
+            $counts[$outcome] = ($counts[$outcome] ?? 0) + 1;
+            $results[] = [
+                'service_id' => $serviceId,
+                'client'     => $client,
+                'username'   => $username,
+                'outcome'    => $outcome,
+                'message'    => $message,
+            ];
+        }
+
+        xtreamai_json([
+            'ok'        => true,
+            'done'      => count($rows) < $batchSize,
+            'next'      => $lastId,
+            'processed' => count($results),
+            'counts'    => $counts,
+            'rows'      => $results,
+        ]);
+    } catch (\Throwable $e) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => xtreamai_safe_message($e)]);
+    }
+}
+
+function xtreamai_ajax_bulk_sync()
+{
+    header('Content-Type: application/json; charset=utf-8');
+
+    if (!xtreamai_check_csrf()) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => 'Invalid security token.']);
+    }
+
+    if (!function_exists('localAPI')) {
+        xtreamai_json([
+            'ok'      => false,
+            'done'    => true,
+            'message' => 'The WHMCS local API is not available on this installation.',
+        ]);
+    }
+
+    xtreamai_bulk_require_post();
+
+    $panelId    = (int) ($_REQUEST['panel_id'] ?? 0);
+    $afterId    = (int) ($_REQUEST['after_id'] ?? 0);
+    $includeAll = ((string) ($_REQUEST['include_all'] ?? '0')) === '1';
+
+    if ($panelId < 1) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => 'Select a panel first.']);
+    }
+
+    try {
+        $adminUsername = xtreamai_bulk_admin_username();
+        $batchSize     = 20;
+        $statuses      = $includeAll ? ['Active', 'Suspended'] : ['Active'];
+
+        $rows = \WHMCS\Database\Capsule::table('mod_xtreamai_services')
+            ->join('tblhosting', 'tblhosting.id', '=', 'mod_xtreamai_services.service_id')
+            ->join('tblproducts', 'tblproducts.id', '=', 'tblhosting.packageid')
+            ->leftJoin('tblclients', 'tblclients.id', '=', 'tblhosting.userid')
+            ->where('mod_xtreamai_services.panel_id', $panelId)
+            ->where('mod_xtreamai_services.panel_account_id', '<>', '')
+            ->where('tblproducts.servertype', 'xtreamai')
+            ->whereIn('tblhosting.domainstatus', $statuses)
+            ->where('mod_xtreamai_services.service_id', '>', $afterId)
+            ->orderBy('mod_xtreamai_services.service_id', 'asc')
+            ->limit($batchSize)
+            ->select([
+                'mod_xtreamai_services.service_id as service_id',
+                'mod_xtreamai_services.username as line_username',
+                'tblclients.firstname as firstname',
+                'tblclients.lastname as lastname',
+                'tblproducts.configoption5 as type_option',
+            ])
+            ->get();
+
+        $counts  = [];
+        $results = [];
+        $lastId  = $afterId;
+
+        foreach ($rows as $row) {
+            $serviceId = (int) $row->service_id;
+            $lastId    = $serviceId;
+            $client    = trim(((string) $row->firstname) . ' ' . ((string) $row->lastname));
+            $outcome   = 'error';
+            $message   = '';
+
+            try {
+                if (strtolower(trim((string) $row->type_option)) === 'reseller') {
+                    $outcome = 'skipped_sub_reseller';
+                    $message = 'Sub-Reseller product: nothing to sync.';
+                    $result  = null;
+                } else {
+                    $result = localAPI('ModuleCustom', ['accountid' => $serviceId, 'serviceid' => $serviceId, 'func_name' => 'sync'], $adminUsername);
+                }
+
+                if ($outcome !== 'skipped_sub_reseller') {
+                    if (is_array($result) && isset($result['result']) && $result['result'] === 'success') {
+                        $outcome = 'synced';
+                        $message = '';
+                    } else {
+                        $outcome = 'error';
+                        $message = (is_array($result) && isset($result['message']) && is_scalar($result['message']))
+                            ? (string) $result['message']
+                            : 'The module did not report success.';
+                    }
+                }
+            } catch (\Throwable $e) {
+                $outcome = 'error';
+                $message = xtreamai_safe_message($e);
+            }
+
+            $counts[$outcome] = ($counts[$outcome] ?? 0) + 1;
+            $results[] = [
+                'service_id' => $serviceId,
+                'client'     => $client,
+                'username'   => (string) $row->line_username,
+                'outcome'    => $outcome,
+                'message'    => $message,
+            ];
+        }
+
+        xtreamai_json([
+            'ok'        => true,
+            'done'      => count($rows) < $batchSize,
+            'next'      => $lastId,
+            'processed' => count($results),
+            'counts'    => $counts,
+            'rows'      => $results,
+        ]);
+    } catch (\Throwable $e) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => xtreamai_safe_message($e)]);
+    }
+}
+
+function xtreamai_bulk_first_panel_id(): int
+{
+    try {
+        $panel = \WhmcsXtreamAI\PanelStore::firstActive();
+
+        return $panel !== null ? (int) $panel->id : 0;
+    } catch (\Throwable $e) {
+        return 0;
+    }
+}
+
+function xtreamai_bulk_index_rows(int $panelId, string $field, $value): array
+{
+    if ($field !== 'service_tag' && $field !== 'username') {
+        return [];
+    }
+    if ($value === null || $value === '') {
+        return [];
+    }
+
+    $out  = [];
+    $rows = \WHMCS\Database\Capsule::table('mod_xtreamai_line_index')
+        ->where('panel_id', $panelId)
+        ->where($field, $value)
+        ->orderBy('id', 'asc')
+        ->get();
+
+    foreach ($rows as $row) {
+        $out[] = (array) $row;
+    }
+
+    return $out;
+}
+
+function xtreamai_bulk_expiry($expDate): ?string
+{
+    $timestamp = (int) $expDate;
+    if ($timestamp < 1) {
+        return null;
+    }
+
+    return gmdate('Y-m-d', $timestamp);
+}
+
+function xtreamai_bulk_hosting_credentials(int $serviceId, string $username, string $password): string
+{
+    if ($serviceId < 1) {
+        return '';
+    }
+
+    $note   = '';
+    $update = [];
+    if ($username !== '') {
+        $update['username'] = $username;
+    }
+    if ($password !== '') {
+        if (function_exists('encrypt')) {
+            $update['password'] = encrypt($password);
+        } else {
+            $note = ' The password could not be stored on the service (WHMCS encrypt() unavailable).';
+        }
+    }
+
+    if ($update) {
+        \WHMCS\Database\Capsule::table('tblhosting')->where('id', $serviceId)->update($update);
+        $note = ' Username and password copied to the service.' . $note;
+    }
+
+    return $note;
+}
+
+function xtreamai_bulk_admin_username(): string
+{
+    $adminId = isset($_SESSION['adminid']) ? (int) $_SESSION['adminid'] : 0;
+    if ($adminId > 0) {
+        $row = \WHMCS\Database\Capsule::table('tbladmins')->where('id', $adminId)->first();
+        if ($row !== null && !empty($row->username)) {
+            return (string) $row->username;
+        }
+    }
+
+    $row = \WHMCS\Database\Capsule::table('tbladmins')->orderBy('id', 'asc')->first();
+    if ($row !== null && !empty($row->username)) {
+        return (string) $row->username;
+    }
+
+    throw new \RuntimeException('No WHMCS admin account was found to run the module command.');
+}
+
 function xtreamai_render($modulelink, $view, $flash, $editId, $panelId)
 {
     $h = static function ($value) {
@@ -451,6 +924,7 @@ function xtreamai_render($modulelink, $view, $flash, $editId, $panelId)
     $resellersActive = $view === 'resellers' ? ' class="active"' : '';
     $linesActive     = $view === 'lines' ? ' class="active"' : '';
     $catalogActive   = $view === 'catalog' ? ' class="active"' : '';
+    $bulkActive      = $view === 'bulk' ? ' class="active"' : '';
 
     $linkDashboard  = $h($modulelink);
     $linkList       = $h(xtreamai_link($modulelink, ['view' => 'list']));
@@ -459,6 +933,7 @@ function xtreamai_render($modulelink, $view, $flash, $editId, $panelId)
     $linkResellers  = $h(xtreamai_link($modulelink, ['view' => 'resellers']));
     $linkLines      = $h(xtreamai_link($modulelink, ['view' => 'lines']));
     $linkCatalog    = $h(xtreamai_link($modulelink, ['view' => 'catalog']));
+    $linkBulk       = $h(xtreamai_link($modulelink, ['view' => 'bulk']));
     $linkEditBase   = $h(xtreamai_link($modulelink, ['view' => 'list', 'edit' => '']));
     $flashHtml = '';
     if (!empty($flash['message'])) {
@@ -612,6 +1087,21 @@ font-family:var(--xtai-font);font-size:14px;line-height:1.55;color:var(--xtai-te
 .xtai-pagination__count{color:var(--xtai-muted);font-size:12.5px}
 .xtai-pagination__more{color:var(--xtai-primary);font-weight:600}
 .xtai-pagination__nav{display:flex;gap:8px;align-items:center}
+.xtai-warn{display:flex;align-items:flex-start;gap:10px;margin:0 0 16px;padding:12px 14px;border:1px solid var(--xtai-warning-border);border-left-width:4px;border-radius:var(--xtai-radius-sm);background:var(--xtai-warning-soft);color:var(--xtai-warning-strong);font-size:13px}
+.xtai-warn__icon{flex:none;width:20px;height:20px;border-radius:50%;background:var(--xtai-warning);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.xtai-bulk-progress{margin:16px 0 0}
+.xtai-bulk-bar{position:relative;height:8px;border:1px solid var(--xtai-border);border-radius:var(--xtai-radius-pill);background:var(--xtai-neutral-soft);overflow:hidden}
+.xtai-bulk-bar-fill{display:block;height:100%;width:0;border-radius:var(--xtai-radius-pill);background:var(--xtai-primary);transition:width .25s ease,background .25s ease}
+.xtai-bulk-bar.is-running .xtai-bulk-bar-fill{width:38%;animation:xtai-bulk-slide 1.1s ease-in-out infinite}
+.xtai-bulk-bar.is-done .xtai-bulk-bar-fill{width:100%;background:var(--xtai-success)}
+.xtai-bulk-bar.is-error .xtai-bulk-bar-fill{width:100%;background:var(--xtai-danger)}
+@keyframes xtai-bulk-slide{0%{margin-left:0}50%{margin-left:62%}100%{margin-left:0}}
+.xtai-bulk-progress-text{margin:8px 0 0;color:var(--xtai-muted);font-size:12.5px}
+.xtai-bulk-counters{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 0}
+.xtai-bulk-counter{display:inline-flex;align-items:center;gap:6px;padding:3px 11px;border:1px solid var(--xtai-border);border-radius:var(--xtai-radius-pill);background:var(--xtai-neutral-soft);color:var(--xtai-neutral-strong);font-size:12px}
+.xtai-bulk-counter strong{font-family:var(--xtai-mono);color:var(--xtai-text)}
+.xtai-table-wrap--bulk{max-height:320px;margin-top:14px}
+.xtai-bulk-empty{color:var(--xtai-muted);font-size:13px;text-align:center}
 @media (max-width:900px){
 .xtai-wrap{padding:16px}
 .xtai-settings-grid{grid-template-columns:1fr}
@@ -628,7 +1118,7 @@ font-family:var(--xtai-font);font-size:14px;line-height:1.55;color:var(--xtai-te
 </style>
 <div class="xtai-head">
 <div><h1>Xtream AI Panel</h1><small>Manage panels, connections and provisioning settings</small></div>
-<nav class="xtai-nav"><a href="' . $linkDashboard . '"' . $dashboardActive . '>Dashboard</a><a href="' . $linkList . '"' . $listActive . '>Panels</a><a href="' . $linkResellers . '"' . $resellersActive . '>Sub-Resellers</a><a href="' . $linkLines . '"' . $linesActive . '>Lines</a><a href="' . $linkCatalog . '"' . $catalogActive . '>Catalog</a><a href="' . $linkLogs . '"' . $logsActive . '>Module Logs</a><a href="' . $linkSettings . '"' . $settingsActive . '>General Settings</a></nav>
+<nav class="xtai-nav"><a href="' . $linkDashboard . '"' . $dashboardActive . '>Dashboard</a><a href="' . $linkList . '"' . $listActive . '>Panels</a><a href="' . $linkResellers . '"' . $resellersActive . '>Sub-Resellers</a><a href="' . $linkLines . '"' . $linesActive . '>Lines</a><a href="' . $linkBulk . '"' . $bulkActive . '>Bulk tools</a><a href="' . $linkCatalog . '"' . $catalogActive . '>Catalog</a><a href="' . $linkLogs . '"' . $logsActive . '>Module Logs</a><a href="' . $linkSettings . '"' . $settingsActive . '>General Settings</a></nav>
 </div>
 ' . $flashHtml;
 
@@ -1207,6 +1697,311 @@ JS;
             }
         }
         echo '</div>';
+    } elseif ($view === 'bulk') {
+        [$activePanels, $selectedPanelId, $panelOptions] = xtreamai_panel_selector($panels, $panelId, $h);
+
+        echo '<div class="xtai-card">'
+            . '<div class="xtai-card-head">'
+            . '<div><h2>Bulk tools</h2><p class="xtai-sub">Run migration and maintenance operations on the selected panel in batches. Every operation is safe to run again.</p></div>';
+
+        if (!empty($activePanels)) {
+            echo '<form method="get" action="' . $linkList . '" class="xtai-panel-switch">'
+                . '<input type="hidden" name="view" value="bulk">'
+                . '<label for="xtai-panel-select">Panel</label>'
+                . '<select id="xtai-panel-select" name="panel_id" onchange="this.form.submit()">'
+                . $panelOptions
+                . '</select>'
+                . '</form>';
+        }
+
+        echo '</div>';
+
+        if (empty($activePanels) || $selectedPanelId < 1) {
+            echo '<div class="xtai-empty"><span class="xtai-empty__icon" aria-hidden="true">&#128421;</span><p class="xtai-empty__title">No active panels</p><p>Activate a panel first to use the bulk tools.</p></div>';
+        }
+
+        echo '</div>';
+
+        if (!empty($activePanels) && $selectedPanelId > 0) {
+            $resultColumns = ['Service ID', 'Client', 'Username', 'Outcome', 'Message'];
+
+            echo xtreamai_bulk_card(
+                'index',
+                '1. Index panel lines',
+                'Reads every line of the selected panel and stores it locally: line id, username, expiry, status and the WHMCS service tag parsed from the line notes with the Line Notes Template. The other two tools use this index. It only reads from the panel and can be run again at any time; the first batch of a run replaces the previous index of this panel.',
+                'Index lines',
+                '',
+                '',
+                ['Batch', 'Lines indexed', 'Total indexed'],
+                $h
+            );
+
+            echo xtreamai_bulk_card(
+                'link',
+                '2. Link existing services',
+                'Matches WHMCS services that have no panel line yet against the local index, first by the service tag in the line notes and then by the panel username. Use it after migrating services from another WHMCS module: it restores the link to the existing line without touching the panel.',
+                'Link services',
+                'Include Pending, Terminated and Cancelled services',
+                '',
+                $resultColumns,
+                $h
+            );
+
+            echo xtreamai_bulk_card(
+                'sync',
+                '3. Sync all services',
+                'Runs the same line sync as the Sync line to panel button on every linked service of the panel: bouquets, notes and connection count are recalculated from each product, including the extra_connections configurable option.',
+                'Sync services',
+                'Include Suspended services',
+                'This writes to every linked line of the selected panel. Run it when the product configuration is final.',
+                $resultColumns,
+                $h
+            );
+
+            $bulkUrls = json_encode([
+                'index' => xtreamai_link($modulelink, ['action' => 'ajax_bulk_index']),
+                'link'  => xtreamai_link($modulelink, ['action' => 'ajax_bulk_link']),
+                'sync'  => xtreamai_link($modulelink, ['action' => 'ajax_bulk_sync']),
+            ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+
+            $bulkScript = <<<'JS'
+<script>
+(function () {
+    var token = TOKEN_PLACEHOLDER;
+    var urls = URLS_PLACEHOLDER;
+    var outcomes = {
+        index: ['indexed', 'total'],
+        link: ['linked_by_tag', 'linked_by_username', 'not_found', 'ambiguous_tag', 'skipped_sub_reseller', 'skipped_other_panel', 'error'],
+        sync: ['synced', 'skipped_sub_reseller', 'error']
+    };
+    var labels = {
+        indexed: 'Lines indexed',
+        total: 'Total in index',
+        linked_by_tag: 'Linked by tag',
+        linked_by_username: 'Linked by username',
+        not_found: 'Not found',
+        ambiguous_tag: 'Ambiguous tag',
+        skipped_sub_reseller: 'Sub-Reseller skipped',
+        skipped_other_panel: 'Other panel skipped',
+        error: 'Errors',
+        synced: 'Synced'
+    };
+    var running = false;
+
+    function byId(id) {
+        return document.getElementById(id);
+    }
+
+    function card(op) {
+        return byId('xtai-bulk-' + op);
+    }
+
+    function pick(root, selector) {
+        return root ? root.querySelector(selector) : null;
+    }
+
+    function setBar(op, state, text) {
+        var root = card(op);
+        var bar = pick(root, '.xtai-bulk-bar');
+        var label = pick(root, '.xtai-bulk-progress-text');
+        var cls = 'xtai-bulk-bar';
+        if (state === 'running') { cls += ' is-running'; }
+        if (state === 'done') { cls += ' is-done'; }
+        if (state === 'error') { cls += ' is-error'; }
+        if (bar) { bar.className = cls; }
+        if (label) { label.textContent = text; }
+    }
+
+    function renderCounters(op, counts) {
+        var box = pick(card(op), '.xtai-bulk-counters');
+        if (!box) { return; }
+        var keys = (outcomes[op] || []).slice();
+        Object.keys(counts).forEach(function (key) {
+            if (keys.indexOf(key) === -1) { keys.push(key); }
+        });
+        box.innerHTML = '';
+        keys.forEach(function (key) {
+            var value = counts[key] || 0;
+            if (value < 1) { return; }
+            var chip = document.createElement('span');
+            chip.className = 'xtai-bulk-counter';
+            var name = document.createElement('span');
+            name.textContent = labels[key] || key;
+            var number = document.createElement('strong');
+            number.textContent = String(value);
+            chip.appendChild(name);
+            chip.appendChild(number);
+            box.appendChild(chip);
+        });
+    }
+
+    function resetTable(op) {
+        var root = card(op);
+        var body = pick(root, '.xtai-bulk-rows');
+        if (!body) { return; }
+        var columns = root.querySelectorAll('.xtai-table thead th').length;
+        body.innerHTML = '<tr class="xtai-bulk-empty"><td colspan="' + columns + '">No results yet.</td></tr>';
+    }
+
+    function addRows(op, rows, keys) {
+        var body = pick(card(op), '.xtai-bulk-rows');
+        if (!body) { return; }
+        var empty = pick(card(op), '.xtai-bulk-empty');
+        if (empty && empty.parentNode) { empty.parentNode.removeChild(empty); }
+        rows.forEach(function (row) {
+            var tr = document.createElement('tr');
+            keys.forEach(function (key) {
+                var td = document.createElement('td');
+                var value = row[key];
+                td.textContent = (value === null || value === undefined) ? '' : String(value);
+                if (key !== 'client' && key !== 'username') { td.className = 'xtai-meta'; }
+                tr.appendChild(td);
+            });
+            body.appendChild(tr);
+        });
+        while (body.children.length > 500) { body.removeChild(body.firstChild); }
+    }
+
+    function setBusy(state) {
+        var buttons = document.querySelectorAll('.xtai-bulk-run');
+        for (var i = 0; i < buttons.length; i++) {
+            buttons[i].disabled = state;
+            if (state) { buttons[i].classList.add('is-loading'); } else { buttons[i].classList.remove('is-loading'); }
+        }
+        var panel = byId('xtai-panel-select');
+        if (panel) { panel.disabled = state; }
+    }
+
+    function run(op) {
+        if (running) { return; }
+        var panelEl = byId('xtai-panel-select');
+        var panelId = panelEl ? String(panelEl.value || '') : '';
+        if (panelId === '' || panelId === '0') {
+            setBar(op, 'error', 'Select a panel first.');
+            return;
+        }
+        var root = card(op);
+        if (!root) { return; }
+
+        var includeEl = pick(root, '.xtai-bulk-include');
+        var includeAll = (includeEl && includeEl.checked) ? '1' : '0';
+        var keys = (op === 'index')
+            ? ['batch', 'indexed', 'total']
+            : ['service_id', 'client', 'username', 'outcome', 'message'];
+        var counts = {};
+        var batches = 0;
+        var processedTotal = 0;
+        var marker = (op === 'index') ? '' : '0';
+        var previous = null;
+
+        running = true;
+        setBusy(true);
+        resetTable(op);
+        renderCounters(op, counts);
+        setBar(op, 'running', 'Starting...');
+
+        function finish() {
+            running = false;
+            setBusy(false);
+        }
+
+        function fail(message) {
+            setBar(op, 'error', message || 'The operation failed.');
+            finish();
+        }
+
+        function step() {
+            var body = new FormData();
+            body.set('token', token);
+            body.set('panel_id', panelId);
+            body.set('include_all', includeAll);
+            if (op === 'index') { body.set('cursor', marker); } else { body.set('after_id', marker); }
+
+            fetch(urls[op], { method: 'POST', body: body, credentials: 'same-origin' })
+                .then(function (response) { return response.json(); })
+                .then(function (data) {
+                    if (!data || !data.ok) {
+                        fail(data && data.message ? data.message : 'The operation failed.');
+                        return;
+                    }
+                    batches++;
+
+                    if (op === 'index') {
+                        var indexed = parseInt(data.indexed, 10);
+                        if (isNaN(indexed)) { indexed = 0; }
+                        var total = parseInt(data.total_indexed, 10);
+                        if (isNaN(total)) { total = 0; }
+                        counts.indexed = (counts.indexed || 0) + indexed;
+                        counts.total = total;
+                        addRows(op, [{ batch: batches, indexed: indexed, total: total }], keys);
+                        renderCounters(op, counts);
+                        if (data.done) {
+                            setBar(op, 'done', 'Done. ' + counts.indexed + ' lines indexed in ' + batches + ' batches, ' + total + ' lines in the index.');
+                            finish();
+                            return;
+                        }
+                        var nextCursor = data.next_cursor ? String(data.next_cursor) : '';
+                        if (nextCursor === '' || nextCursor === previous) {
+                            fail('The panel did not return a usable cursor.');
+                            return;
+                        }
+                        previous = nextCursor;
+                        marker = nextCursor;
+                        setBar(op, 'running', 'Batch ' + batches + ', ' + counts.indexed + ' lines indexed, ' + total + ' in index');
+                        step();
+                        return;
+                    }
+
+                    processedTotal += parseInt(data.processed, 10) || 0;
+                    addRows(op, data.rows || [], keys);
+                    if (data.counts && typeof data.counts === 'object') {
+                        Object.keys(data.counts).forEach(function (key) {
+                            counts[key] = (counts[key] || 0) + (parseInt(data.counts[key], 10) || 0);
+                        });
+                    }
+                    renderCounters(op, counts);
+                    if (data.done) {
+                        setBar(op, 'done', 'Done. ' + processedTotal + ' services processed in ' + batches + ' batches.');
+                        finish();
+                        return;
+                    }
+                    var nextId = parseInt(data.next, 10);
+                    if (isNaN(nextId) || (previous !== null && nextId <= previous)) {
+                        fail('The batch marker did not advance.');
+                        return;
+                    }
+                    previous = nextId;
+                    marker = String(nextId);
+                    setBar(op, 'running', 'Batch ' + batches + ', ' + processedTotal + ' services processed');
+                    step();
+                })
+                .catch(function () {
+                    fail('The request failed. Check the connection and try again.');
+                });
+        }
+
+        step();
+    }
+
+    var runButtons = document.querySelectorAll('.xtai-bulk-run');
+    for (var i = 0; i < runButtons.length; i++) {
+        runButtons[i].addEventListener('click', function () {
+            run(this.getAttribute('data-op'));
+        });
+    }
+})();
+</script>
+JS;
+
+            echo str_replace(
+                ['TOKEN_PLACEHOLDER', 'URLS_PLACEHOLDER'],
+                [
+                    json_encode(xtreamai_token_plain(), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT),
+                    $bulkUrls,
+                ],
+                $bulkScript
+            );
+        }
     } elseif ($view === 'catalog') {
         [$activePanels, $selectedPanelId, $panelOptions] = xtreamai_panel_selector($panels, $panelId, $h);
 
@@ -1680,6 +2475,59 @@ function xtreamai_panel_selector(array $panels, int $panelId, callable $h): arra
     }
 
     return [$activePanels, $selectedPanelId, $options];
+}
+
+function xtreamai_bulk_card(
+    string $op,
+    string $title,
+    string $sub,
+    string $button,
+    string $includeLabel,
+    string $warning,
+    array $columns,
+    callable $h
+): string {
+    $html = '<section class="xtai-card xtai-bulk" id="xtai-bulk-' . $op . '">'
+        . '<h2>' . $h($title) . '</h2>'
+        . '<p class="xtai-sub">' . $h($sub) . '</p>';
+
+    if ($warning !== '') {
+        $html .= '<div class="xtai-warn" role="alert"><span class="xtai-warn__icon" aria-hidden="true">&#33;</span>'
+            . '<span>' . $h($warning) . '</span></div>';
+    }
+
+    $html .= '<div class="xtai-actions">'
+        . '<button type="button" class="xtai-btn xtai-btn--primary xtai-bulk-run" data-op="' . $op . '">' . $h($button) . '</button>';
+
+    if ($includeLabel !== '') {
+        $html .= '<label class="xtai-switch">'
+            . '<input type="checkbox" class="xtai-bulk-include" value="1">'
+            . '<span class="xtai-switch__track"></span>'
+            . '<span class="xtai-switch__label">' . $h($includeLabel) . '</span>'
+            . '</label>';
+    }
+
+    $html .= '<span class="xtai-test-result xtai-bulk-status"></span>'
+        . '</div>'
+        . '<div class="xtai-bulk-progress">'
+        . '<div class="xtai-bulk-bar"><span class="xtai-bulk-bar-fill"></span></div>'
+        . '<p class="xtai-bulk-progress-text">Idle.</p>'
+        . '</div>'
+        . '<div class="xtai-bulk-counters"></div>'
+        . '<div class="xtai-table-wrap xtai-table-wrap--bulk"><table class="xtai-table">'
+        . '<thead><tr>';
+
+    foreach ($columns as $column) {
+        $html .= '<th>' . $h($column) . '</th>';
+    }
+
+    $html .= '</tr></thead>'
+        . '<tbody class="xtai-bulk-rows">'
+        . '<tr class="xtai-bulk-empty"><td colspan="' . count($columns) . '">No results yet.</td></tr>'
+        . '</tbody></table></div>'
+        . '</section>';
+
+    return $html;
 }
 
 function xtreamai_catalog_icon(string $icon, callable $h): string

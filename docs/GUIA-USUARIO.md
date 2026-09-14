@@ -179,7 +179,57 @@ Los cambios de paquete necesitan que tu panel se haya actualizado el **2026-09-1
 
 ---
 
-## 8. Productos Sub-Reseller explicados fácil
+## 8. Herramientas masivas
+
+La pestaña **Bulk tools** (**Addons → Xtream AI Panel → Bulk tools**) hace tres trabajos que, de otra forma, obligarían a editar los servicios uno por uno. Se ejecutan por lotes en tu navegador (100 líneas por petición al indexar, 100 servicios al vincular, 20 al sincronizar) y muestran una barra de progreso, un contador por cada resultado y una fila por servicio. Se pueden volver a ejecutar sin miedo: nunca se duplica nada y nunca se borra nada del panel. Si una ejecución se corta a la mitad (el panel dejó de responder, se cerró la pestaña), vuelve a lanzarla: el índice se reconstruye desde cero y la vinculación no arranca hasta que el índice se haya completado una vez.
+
+El desplegable **Panel** de arriba decide sobre qué panel trabaja todo lo demás. Si lo cambias, la página se recarga en ese panel.
+
+### 8.1 Index panel lines (indexar las líneas del panel)
+
+Lee las líneas que ya existen en el panel y guarda una copia local: id de la línea, usuario, vencimiento, estado y el número de servicio de WHMCS que aparece en las notas de la línea.
+
+1. Elige el panel en el desplegable **Panel**.
+2. En la primera tarjeta, pulsa **Index lines** (indexar líneas).
+3. Espera a que termine la barra de progreso. Los contadores te dicen cuántas líneas se leyeron y cuántas hay ahora en el índice local.
+
+Ejecuta esto antes que las otras dos herramientas. Solo lee del panel, así que no cambia nada allí. Si lo vuelves a ejecutar, el índice de ese panel se reconstruye desde cero.
+
+### 8.2 Link existing services (vincular servicios existentes)
+
+Conecta los servicios de WHMCS que todavía no tienen una línea del panel registrada con las líneas que ya existen. Busca primero el **número de servicio en las notas de la línea** (la plantilla **Line Notes Template** de General Settings, `WHMCS:{service_id}` por defecto) y, si no lo encuentra, por el **usuario**.
+
+1. Elige el panel y ejecuta antes **Index panel lines**.
+2. Marca **Include Pending, Terminated and Cancelled services** solo si quieres vincular también esos servicios. Lo normal es dejarlos fuera.
+3. Pulsa **Link services** (vincular servicios) y mira cómo se llena la tabla de resultados.
+
+Por cada servicio obtienes una fila con el id del servicio, el cliente, el usuario y el resultado:
+
+| Resultado | Qué significa |
+|---|---|
+| `linked_by_tag` | Las notas de una línea del panel contienen este número de servicio. Es la coincidencia más fiable. |
+| `linked_by_username` | El usuario del servicio coincide con el usuario de la línea. No se encontró la etiqueta. |
+| `not_found` | Ninguna línea coincidió. El servicio no se tocó. |
+| `ambiguous_tag` | Varias líneas llevan este número de servicio y ninguna tiene el usuario del servicio. No se vinculó nada, así nunca se elige la línea equivocada: pon el usuario en el servicio de WHMCS (o corrige las notas en el panel) y vuelve a ejecutar. El mensaje lista los ids de línea. |
+| `skipped_sub_reseller` | El producto es Sub-Reseller: no hay línea que vincular. |
+| `skipped_other_panel` | El producto apunta a otro panel, así que queda para una ejecución en ese panel. |
+| `error` | Algo falló. La columna de mensaje explica qué. |
+
+En el panel no se crea ni se borra nada: esta herramienta solo restaura el vínculo entre WHMCS y la línea.
+
+### 8.3 Sync all services (sincronizar todos los servicios)
+
+Ejecuta la misma acción que el botón **Sync line to panel** de cada servicio, pero para todos a la vez: los bouquets, las notas y las conexiones (Max Connections más cualquier opción configurable de conexiones, como `extra_connections`) de cada producto se recalculan y se envían a su línea del panel.
+
+1. Elige el panel. (No hace falta haber vinculado en esta misma sesión, pero los servicios sí necesitan tener una línea vinculada.)
+2. Marca **Include Suspended services** si también deben actualizarse los servicios suspendidos.
+3. Pulsa **Sync services** (sincronizar servicios).
+
+**Aviso:** esto escribe en **todas las líneas activas y vinculadas** del panel seleccionado, una por una, con la configuración de su producto. Ejecútalo cuando la configuración de los productos esté ya lista. Úsalo después de cambiar una opción configurable de conexiones (o el Max Connections de un producto) para que el nuevo número llegue a todas las líneas de los clientes. Los servicios cuyo producto es Sub-Reseller aparecen como `skipped_sub_reseller`, y la tabla de resultados marca el resto como `synced` o `error`.
+
+---
+
+## 9. Productos Sub-Reseller explicados fácil
 
 **Para qué sirven:** un producto Sub-Reseller le da a tu cliente su **propia cuenta de reventa** en el panel, con sus **propios créditos**. Así, tu cliente puede revender líneas por su cuenta.
 
@@ -198,7 +248,7 @@ No hace falta elegir Package ni Bouquets para este tipo: el módulo los ignora y
 
 ---
 
-## 9. Todas las pantallas del addon, una a una
+## 10. Todas las pantallas del addon, una a una
 
 Dentro de **Addons → Xtream AI Panel** tienes estas pestañas:
 
@@ -211,6 +261,8 @@ Dentro de **Addons → Xtream AI Panel** tienes estas pestañas:
 **Lines** — para buscar líneas. Puedes filtrar por **nombre de usuario** (campo "Username contains…") y por **estado** (All statuses / Enabled / Disabled).
 
 **Catalog** — para ver qué hay en tu panel: **Live Streams** (canales en directo) y **VOD** (películas y series). Tiene su propio buscador.
+
+**Bulk tools** — las tres operaciones que trabajan sobre muchos servicios a la vez: **Index panel lines**, **Link existing services** y **Sync all services**. Mira la sección 8.
 
 **Module Logs** — un historial de lo que ha hecho el módulo (cada llamada a la API del panel), con fecha, acción y un resumen breve.
 
@@ -235,7 +287,7 @@ Cuando termines, pulsa **Save Settings** (Guardar ajustes).
 
 ---
 
-## 10. Problemas comunes
+## 11. Problemas comunes
 
 | Mensaje que puedes ver | Qué significa | Qué hacer |
 |---|---|---|
@@ -251,7 +303,7 @@ Cuando termines, pulsa **Save Settings** (Guardar ajustes).
 
 ---
 
-## 11. Preguntas frecuentes
+## 12. Preguntas frecuentes
 
 **¿Necesito ser administrador del panel?**
 Para productos Line, no. Para productos Sub-Reseller, sí: la key del panel debe ser una admin key. Cambiar el paquete del panel de una línea que ya está funcionando (un upgrade o downgrade de producto en WHMCS) también necesita una admin key; con una key de reseller se termina el servicio y se aprovisiona de nuevo.
@@ -261,6 +313,9 @@ Sí. Las API keys se guardan **cifradas** con el cifrado propio de WHMCS, y nunc
 
 **¿Puedo tener varios paneles?**
 Sí. Añade todos los que quieras en Panels, y en cada producto eliges cuál usa.
+
+**Migré desde otro módulo, ¿cómo conecto mis servicios existentes?**
+Entra en **Addons → Xtream AI Panel → Bulk tools**, elige tu panel en el desplegable, pulsa **Index lines** en la primera tarjeta y, cuando termine, pulsa **Link services** en la segunda. Cada servicio se empareja con su línea por el número de servicio de WHMCS guardado en las notas de la línea (plantilla `WHMCS:{service_id}`) o, si no hay etiqueta, por el usuario: el vínculo se restaura sin crear, cambiar ni borrar nada en el panel. Después puedes pulsar **Sync services** en la tercera tarjeta para que cada línea reciba los bouquets y las conexiones de su producto.
 
 **¿Mis clientes pueden elegir cuántas conexiones quieren?**
 Sí. Añade al producto una Opción Configurable de WHMCS llamada `extra_connections` (una cantidad desde 0, con precio por unidad) y el módulo la suma a las conexiones del paquete, en el pedido y cada vez que el cliente la cambie después. Mira "Dejar que el cliente compre conexiones extra" en la sección 5.
@@ -273,7 +328,7 @@ No, el módulo es gratuito y de código abierto (MIT).
 
 ---
 
-## 12. Desinstalar
+## 13. Desinstalar
 
 1. En **System Settings → Addon Modules**, busca **Xtream AI Panel** y pulsa **Deactivate** (Desactivar). Los datos se **conservan**, por si quieres volver a activarlo después.
 2. Para borrarlo del todo, elimina las dos carpetas por el Administrador de Archivos o FTP:
