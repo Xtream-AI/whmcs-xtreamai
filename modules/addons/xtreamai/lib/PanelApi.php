@@ -84,11 +84,23 @@ final class PanelApi
                     'duration' => self::packageDuration($package),
                     'is_official' => (bool) self::value($package, 'is_official', false),
                     'is_trial' => (bool) self::value($package, 'is_trial', false),
+                    'max_connections' => (int) self::value($package, 'max_connections', 0),
                 ];
             }
 
             return $out;
         });
+    }
+
+    public static function packageMaxConnections(int $panelId, int $packageId): int
+    {
+        foreach (self::packages($panelId) as $package) {
+            if ((int) $package['id'] === $packageId) {
+                return (int) $package['max_connections'];
+            }
+        }
+
+        throw new \RuntimeException('Package #' . $packageId . ' was not found on the panel.');
     }
 
     

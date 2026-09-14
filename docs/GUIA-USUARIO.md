@@ -112,7 +112,18 @@ Ahora crea el producto que vas a vender.
 | **Bouquets** | Los canales/paquetes de contenido que tendrá la línea. | Márcalos con las casillas. |
 | **Account Type** | Qué tipo de acceso se crea. | `Line (default)` para una línea IPTV normal, o `Sub-Reseller` para una cuenta de reventa. |
 | **Credits** | Créditos iniciales. **Solo** se usa en `Sub-Reseller`. | Por ejemplo `100`. En `Line` déjalo en `0`. |
-| **Max Connections** | Máximo de conexiones concurrentes por línea. Solo tiene efecto cuando el panel usa una clave de tipo **Admin**; las claves de **Reseller** lo ignoran. | Deja `0` para usar el valor del paquete. Cualquier valor entre `1` y `100` para sobreescribir. El número es absoluto y significa lo mismo en todos lados: al crear la línea, al pulsar Sync y en un cambio de producto. |
+| **Max Connections** | Máximo de conexiones concurrentes por línea. Solo tiene efecto cuando el panel usa una clave de tipo **Admin**; las claves de **Reseller** lo ignoran. | Deja `0` para usar el valor del paquete (`0` nunca significa ilimitado). Cualquier valor entre `1` y `100` para sobreescribir. El número es absoluto y significa lo mismo en todos lados: al crear la línea, al pulsar Sync y en un cambio de producto. Para que el cliente elija, mira "Dejar que el cliente compre conexiones extra" justo debajo. |
+
+### Dejar que el cliente compre conexiones extra
+
+No necesitas un producto por cada cantidad de conexiones. Añade una **Opción Configurable** de WHMCS al producto (System Settings → Configurable Options, y asigna el grupo al producto) y el módulo la lee por su nombre. El nombre no distingue mayúsculas y la parte después de `|` se ignora, así que `extra_connections|Conexiones extra` muestra "Conexiones extra" al cliente y funciona igual.
+
+| Nombre de la opción | Cómo la usa el módulo | Configuración típica |
+|---|---|---|
+| `extra_connections` (o `Extra Connections`, `additional_connections`) | Se suma a la base. La base es el **Max Connections** del producto si no es `0`; si es `0`, las conexiones del paquete del panel. | Una opción de tipo **Quantity** de `0` a `4` con precio por unidad. Con un paquete de 1 conexión el cliente obtiene de 1 a 5 conexiones, y `0` no cuesta nada extra. |
+| `max_connections` (o `Connections`) | Reemplaza la base por completo. Con `0` se usa Max Connections y, si es `0`, el paquete. | Un **Dropdown** con `1`, `2`, `3`... |
+
+El resultado se envía al crear la línea, al pulsar **Sync line to panel** y cada vez que el cliente cambia la opción después desde **Upgrade/Downgrade Options** (WHMCS ejecuta el cambio de paquete del módulo al pagarse la factura del upgrade). Volver el control a `0` devuelve la línea a las conexiones del paquete. Igual que Max Connections, necesita una clave **Admin** en el panel; con una clave de Reseller las conexiones las decide el panel.
 | **Sub-Reseller Member Group ID** | Id numérico del grupo de miembros del panel al que pertenecerán las nuevas cuentas Sub-Reseller. Solo se usa cuando **Account Type** es `Sub-Reseller` y la clave del panel es de tipo **Admin**; las claves de Reseller heredan el grupo desde su propia configuración de sub-reseller. | Por ejemplo `4`. |
 
 **Qué pasa cuando WHMCS crea el servicio:**
@@ -154,12 +165,12 @@ Estas son las acciones que harás como administrador y qué provocan en el panel
 | **Renovar** | Al renovar la factura / el servicio. | La línea se renueva y su fecha de vencimiento se actualiza. |
 | **Terminar** | En el servicio del cliente, botón de terminar/cancelar. | En una **línea**, la línea se borra del panel. En un **sub-reseller**, el módulo devuelve un error claro porque la API del panel no puede desactivar al reseller y conserva el vínculo entre WHMCS y el panel para que puedas desactivar la cuenta manualmente sin perder estado. |
 | **Cambiar contraseña** | En el servicio del cliente, opción de cambiar contraseña. | La contraseña se cambia en el panel y se actualiza para el cliente. |
-| **Sync line to panel** | En el servicio del cliente (área admin), el botón **Sync line to panel**. | Envía los bouquets, notas y `Max Connections` actuales del producto a la línea en el panel. Úsalo cuando editas los config options del producto sin cambiar el producto. |
+| **Sync line to panel** | En el servicio del cliente (área admin), el botón **Sync line to panel**. | Envía los bouquets, notas y conexiones actuales del producto (Max Connections más cualquier opción configurable de conexiones) a la línea en el panel. Úsalo cuando editas los config options del producto sin cambiar el producto. |
 
-**Cambio de producto (upgrade o downgrade).** Cuando cambias el producto WHMCS de un servicio, el módulo lo maneja automáticamente:
+**Cambio de producto (upgrade o downgrade).** Cuando cambias el producto WHMCS de un servicio, o el cliente cambia una opción configurable como las conexiones extra, el módulo lo maneja automáticamente:
 
-- **Mismo paquete de panel, distintos bouquets o max connections:** el módulo empuja los nuevos valores a la línea existente en el panel.
-- **Paquete de panel distinto, panel con clave Admin:** el módulo aplica el paquete nuevo a la misma línea. El cliente conserva su usuario, su contraseña y su fecha de vencimiento, no se cobra nada en créditos, y a la vez se aplican los bouquets y las notas del producto nuevo. **Max Connections** se envía tal cual lo tiene el producto, el mismo número absoluto que se usa al crear la línea. La marca de restreamer sigue al paquete nuevo.
+- **Mismo paquete de panel, distintos bouquets o conexiones:** el módulo empuja los nuevos valores a la línea existente en el panel.
+- **Paquete de panel distinto, panel con clave Admin:** el módulo aplica el paquete nuevo a la misma línea. El cliente conserva su usuario, su contraseña y su fecha de vencimiento, no se cobra nada en créditos, y a la vez se aplican los bouquets y las notas del producto nuevo. Las conexiones se resuelven igual que al crear la línea (Max Connections más cualquier opción configurable de conexiones) y se envían como un único número absoluto. La marca de restreamer sigue al paquete nuevo.
 - **Paquete de panel distinto, panel con clave Reseller:** el módulo rechaza el cambio con un mensaje claro. Para mover a ese cliente a un paquete distinto, termina el servicio actual y aprovisiona el producto nuevo, o cambia la entrada del panel a una clave Admin.
 
 **Los bouquets del producto nuevo tienen que pertenecer al paquete nuevo.** Si alguno no pertenece, el panel rechaza el cambio y te dice qué ids están mal: no se aplica nada a la línea y el servicio se queda con el paquete de panel anterior. Corrige el campo Bouquets del producto y vuelve a intentarlo, o déjalo vacío para que la línea reciba todos los bouquets del paquete nuevo.
@@ -250,6 +261,9 @@ Sí. Las API keys se guardan **cifradas** con el cifrado propio de WHMCS, y nunc
 
 **¿Puedo tener varios paneles?**
 Sí. Añade todos los que quieras en Panels, y en cada producto eliges cuál usa.
+
+**¿Mis clientes pueden elegir cuántas conexiones quieren?**
+Sí. Añade al producto una Opción Configurable de WHMCS llamada `extra_connections` (una cantidad desde 0, con precio por unidad) y el módulo la suma a las conexiones del paquete, en el pedido y cada vez que el cliente la cambie después. Mira "Dejar que el cliente compre conexiones extra" en la sección 5.
 
 **¿Funciona con mi versión de PHP?**
 Sí, con **PHP 7.2 o superior**.

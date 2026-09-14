@@ -163,7 +163,7 @@ function xtreamai_ConfigOptions()
             'Type' => 'text',
             'Size' => '5',
             'Default' => '0',
-            'Description' => 'Maximum concurrent connections per line. Set to 0 to use the package default. Non-zero values only apply when the panel Key type is Admin (reseller keys will silently ignore this).',
+            'Description' => 'Maximum concurrent connections per line. Set to 0 to use the package value (0 never means unlimited). Customers can add connections through a WHMCS configurable option named extra_connections (added on top of this value or, when this is 0, on top of the package value); a configurable option named max_connections replaces this value outright. Only applies when the panel Key type is Admin (reseller keys will silently ignore this).',
         ],
         'sub_reseller_member_group_id' => [
             'FriendlyName' => 'Sub-Reseller Member Group ID',
@@ -544,17 +544,83 @@ function xtreamai_selectedBouquets(array $params): array
     return array_values($out);
 }
 
-function xtreamai_maxConnectionsForService(array $params): int
+function xtreamai_configurableOptionKey(string $name): string
 {
-    $raw = $params['configoption7'] ?? ($params['configoptions']['max_connections'] ?? '0');
-    $value = (int) trim((string) $raw);
-    if ($value < 0) {
-        $value = 0;
+    $key = strtolower(trim($name));
+    $pipe = strpos($key, '|');
+    if ($pipe !== false) {
+        $key = substr($key, 0, $pipe);
     }
-    if ($value > 100) {
-        $value = 100;
+    $key = preg_replace('/[^a-z0-9]+/', '_', $key);
+    if ($key === null) {
+        return '';
     }
-    return $value;
+    return trim($key, '_');
+}
+
+function xtreamai_configurableOptionInt(array $params, array $names): ?int
+{
+    $options = $params['configoptions'] ?? null;
+    if (!is_array($options)) {
+        return null;
+    }
+    $byKey = [];
+    foreach ($options as $name => $value) {
+        $key = xtreamai_configurableOptionKey((string) $name);
+        if ($key !== '' && !array_key_exists($key, $byKey)) {
+            $byKey[$key] = $value;
+        }
+    }
+    foreach ($names as $name) {
+        if (!array_key_exists($name, $byKey)) {
+            continue;
+        }
+        $value = $byKey[$name];
+        if (is_array($value)) {
+            $value = reset($value);
+        }
+        if (preg_match('/\d+/', (string) $value, $m) !== 1) {
+            return 0;
+        }
+        return (int) $m[0];
+    }
+    return null;
+}
+
+function xtreamai_maxConnectionsForService(array $params, int $panelId, int $packageId): int
+{
+    $productMax = xtreamai_clamp((int) trim((string) ($params['configoption7'] ?? '0')), 0, 100);
+
+    $absolute = xtreamai_configurableOptionInt($params, ['max_connections', 'connections']);
+    $extra = xtreamai_configurableOptionInt($params, ['extra_connections', 'additional_connections']);
+
+    $base = ($absolute !== null && $absolute > 0) ? $absolute : $productMax;
+    if ($extra === null) {
+        return xtreamai_clamp($base, 0, 100);
+    }
+    if (\WhmcsXtreamAI\PanelApi::keyType($panelId) !== 'admin') {
+        return 0;
+    }
+    if ($base < 1) {
+        if ($packageId < 1) {
+            throw new \RuntimeException('No package selected for this product.');
+        }
+        $base = \WhmcsXtreamAI\PanelApi::packageMaxConnections($panelId, $packageId);
+    }
+    return xtreamai_clamp($base + $extra, 1, 100);
+}
+
+function xtreamai_currentPackageIdForService(array $params): int
+{
+    try {
+        $row = \WhmcsXtreamAI\ServiceStore::find((int) ($params['serviceid'] ?? 0));
+        if ($row !== null && !empty($row->package_id)) {
+            return (int) $row->package_id;
+        }
+    } catch (\Throwable $e) {
+
+    }
+    return xtreamai_packageIdForService($params);
 }
 
 function xtreamai_subResellerMemberGroupId(array $params): int
@@ -855,7 +921,7 @@ function xtreamai_CreateAccount(array $params)
             ? \WhmcsXtreamAI\PanelApi::adminOwnerMemberId($panelId)
             : null;
 
-        $maxConn = xtreamai_maxConnectionsForService($params);
+        $maxConn = xtreamai_maxConnectionsForService($params, $panelId, $packageId);
         $line = \WhmcsXtreamAI\PanelApi::createLine(
             $panelId,
             $packageId,
@@ -1038,7 +1104,7 @@ function xtreamai_sync(array $params)
         $lineId = xtreamai_lineIdForService($params);
         $bouquets = xtreamai_selectedBouquets($params);
         $notes = xtreamai_renderNotes($params);
-        $maxConn = xtreamai_maxConnectionsForService($params);
+        $maxConn = xtreamai_maxConnectionsForService($params, $panelId, xtreamai_currentPackageIdForService($params));
 
         $fields = [
             'bouquets' => $bouquets,
@@ -1085,7 +1151,7 @@ function xtreamai_ChangePackage(array $params)
 
         $bouquets = xtreamai_selectedBouquets($params);
         $notes = xtreamai_renderNotes($params);
-        $maxConn = xtreamai_maxConnectionsForService($params);
+        $maxConn = xtreamai_maxConnectionsForService($params, $panelId, $newPackageId);
 
         $fields = ['notes' => $notes];
         if ($bouquets !== []) {

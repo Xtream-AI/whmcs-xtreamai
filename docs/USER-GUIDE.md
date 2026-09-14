@@ -112,7 +112,18 @@ Now create the product you want to sell.
 | **Bouquets** | The channels/content packages the line will have. | Tick them with the checkboxes. |
 | **Account Type** | What kind of access is created. | `Line (default)` for a normal IPTV line, or `Sub-Reseller` for a reseller account. |
 | **Credits** | Starting credits. **Only** used for `Sub-Reseller`. | For example `100`. For `Line`, leave it at `0`. |
-| **Max Connections** | Maximum concurrent connections per line. Only takes effect when the panel uses an **Admin** key; **Reseller** keys ignore this. | Leave `0` to use the package default. Any value between `1` and `100` to override. The number is absolute and means the same everywhere: when the line is created, when you press Sync, and on a product change. |
+| **Max Connections** | Maximum concurrent connections per line. Only takes effect when the panel uses an **Admin** key; **Reseller** keys ignore this. | Leave `0` to use the package's own count (`0` never means unlimited). Any value between `1` and `100` to override. The number is absolute and means the same everywhere: when the line is created, when you press Sync, and on a product change. To let the customer choose, see "Letting customers buy extra connections" right below. |
+
+### Letting customers buy extra connections
+
+You do not need one product per connection count. Add a WHMCS **Configurable Option** to the product (System Settings → Configurable Options, then assign the group to the product) and the module reads it by name. The name is case-insensitive and the part after `|` is ignored, so `extra_connections|Extra Connections` shows "Extra Connections" to the customer and still works.
+
+| Option name | How the module uses it | Typical setup |
+|---|---|---|
+| `extra_connections` (or `Extra Connections`, `additional_connections`) | Added on top of the base count. The base is the product's **Max Connections** if it is not `0`, otherwise the connection count of the panel package. | A **Quantity** option from `0` to `4` with a price per unit. On a 1-connection package the customer gets 1 to 5 connections, and `0` costs nothing extra. |
+| `max_connections` (or `Connections`) | Replaces the base count outright. `0` falls back to Max Connections, then to the package. | A **Dropdown** with `1`, `2`, `3`... |
+
+The result is sent when the line is created, when you press **Sync line to panel**, and whenever the customer changes the option later through **Upgrade/Downgrade Options** (WHMCS runs the module's package change after the upgrade invoice is paid). Moving the slider back to `0` returns the line to the package count. Like Max Connections, this needs an **Admin** key on the panel; with a Reseller key the panel decides the connection count.
 | **Sub-Reseller Member Group ID** | Numeric id of the panel member group new Sub-Reseller accounts will belong to. Only used when **Account Type** is `Sub-Reseller` and the panel key is **Admin**; reseller keys inherit the group from their sub-reseller setup. | For example `4`. |
 
 **What happens when WHMCS creates the service:**
@@ -154,12 +165,12 @@ These are the actions you will take as an administrator and what they do in the 
 | **Renew** | When the invoice / service is renewed. | The line is renewed and its expiry date is updated. |
 | **Terminate** | On the customer's service, the terminate/cancel button. | For a **line**, the line is deleted from the panel. For a **sub-reseller**, the module surfaces a clear error because the panel API cannot disable the reseller and it preserves the WHMCS to panel link so you can disable the account in the panel yourself without losing state. |
 | **Change password** | On the customer's service, the change password option. | The password is changed in the panel and updated for the customer. |
-| **Sync line to panel** | On the customer's service (admin area), the **Sync line to panel** button. | The current product's bouquets, notes and `Max Connections` are pushed to the line in the panel. Use this after you edit the product's config options without changing the product. |
+| **Sync line to panel** | On the customer's service (admin area), the **Sync line to panel** button. | The current product's bouquets, notes and connection count (Max Connections plus any connections configurable option) are pushed to the line in the panel. Use this after you edit the product's config options without changing the product. |
 
-**Product upgrade or downgrade.** When you change the WHMCS product of a service, the module handles it automatically:
+**Product upgrade or downgrade.** When you change the WHMCS product of a service, or the customer changes a configurable option such as extra connections, the module handles it automatically:
 
-- **Same panel package, different bouquets or max connections:** the module pushes the new values to the existing line in the panel.
-- **Different panel package, panel with an Admin key:** the module applies the new package to the same line. The customer keeps their username, password and expiry date, nothing is charged in credits, and the new product's bouquets and notes are applied at the same time. **Max Connections** is sent exactly as the product has it, the same absolute number used when the line is created. The restreamer flag follows the new package.
+- **Same panel package, different bouquets or connections:** the module pushes the new values to the existing line in the panel.
+- **Different panel package, panel with an Admin key:** the module applies the new package to the same line. The customer keeps their username, password and expiry date, nothing is charged in credits, and the new product's bouquets and notes are applied at the same time. The connection count is resolved exactly as when the line is created (Max Connections plus any connections configurable option) and sent as one absolute number. The restreamer flag follows the new package.
 - **Different panel package, panel with a Reseller key:** the module refuses the change with a clear message. To move that customer to a different panel package, terminate the current service and re-provision the new product, or switch the panel entry to an Admin key.
 
 **The bouquets of the new product have to belong to the new package.** If one of them does not, the panel refuses the change and tells you which ids are wrong: nothing is applied to the line and the service stays on its previous panel package. Fix the product's Bouquets field and try again, or leave it empty so the line gets every bouquet of the new package.
@@ -250,6 +261,9 @@ Yes. API keys are stored **encrypted** with WHMCS's own encryption, and they nev
 
 **Can I have several panels?**
 Yes. Add as many as you want in Panels, and choose which one each product uses.
+
+**Can my customers choose how many connections they want?**
+Yes. Add a WHMCS Configurable Option named `extra_connections` (a quantity from 0 upwards, priced per unit) to the product and the module adds it on top of the package's connections, on order and every time the customer changes it later. See "Letting customers buy extra connections" in section 5.
 
 **Does it work with my PHP version?**
 Yes, with **PHP 7.2 or higher**.

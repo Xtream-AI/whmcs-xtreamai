@@ -1,3 +1,4 @@
+{literal}
 <style>
 .xtai-client-card{border-radius:12px;border:1px solid #e5e7eb;box-shadow:0 1px 2px rgba(16,24,40,.06);overflow:hidden}
 .xtai-client-card__header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#f8fafc;padding:14px 18px;border-bottom:1px solid #e5e7eb}
@@ -21,6 +22,7 @@
 .xtai-conn-table td{font-size:13.5px;color:#1f2937;vertical-align:middle;word-break:break-all}
 .xtai-conn-empty{padding:20px 18px;text-align:center;color:#6b7280;font-size:13.5px}
 </style>
+{/literal}
 <div class="panel panel-default card mb-3 xtai-client-card">
     <div class="panel-heading card-header xtai-client-card__header">
         <h3 class="panel-title card-title m-0">IPTV Line Details</h3>
@@ -70,6 +72,7 @@
                 </div>
                 {/if}
             </dl>
+            {literal}
             <script>
             (function () {
                 var code = document.getElementById('xtai-line-password');
@@ -150,6 +153,7 @@
                 }
             })();
             </script>
+            {/literal}
         {else}
             <div class="alert alert-warning" style="margin-bottom:0;border-radius:0;">Your IPTV line is not ready yet. If you just ordered, wait for provisioning to finish or contact support.</div>
         {/if}

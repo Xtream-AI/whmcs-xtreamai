@@ -144,11 +144,32 @@ Keep the token safe: paste it into the WHMCS addon in the next step.
 5. Save the product.
 
 The **Max Connections** field caps the number of concurrent connections
-per line. Leave it at `0` to keep the package default. Non-zero values
-apply only when the panel entry uses an **Admin** key; reseller keys
-silently ignore this field. The value is absolute and behaves the same
-everywhere: on creation, on **Sync line to panel**, and on a product
-change that swaps the panel package.
+per line. Leave it at `0` to keep the package value; `0` never means
+unlimited, the panel API does not allow unlimited lines. Non-zero
+values apply only when the panel entry uses an **Admin** key; reseller
+keys silently ignore this field. The value is absolute and behaves the
+same everywhere: on creation, on **Sync line to panel**, and on a
+product change that swaps the panel package.
+
+**Selling extra connections.** Customers can pick their own connection
+count through a WHMCS **Configurable Option** on the product. The module
+reads it by name, case-insensitive, ignoring the `|Display name` part:
+
+- `extra_connections` (also `Extra Connections`, `extra-connections`,
+  `additional_connections`): added on top of the base. The base is the
+  product's **Max Connections** when it is non-zero, otherwise the
+  panel package's own connection count. A quantity slider from `0` to
+  `4` on a 1-connection package gives lines with 1 to 5 connections,
+  and `0` keeps the package value, so the first connection stays part
+  of the product price.
+- `max_connections` (also `Connections`): replaces the base outright.
+  A dropdown of `1`, `2`, `3` gives exactly that many connections. A
+  value of `0` falls back to Max Connections, then to the package.
+
+The resulting number is sent on creation, on **Sync line to panel** and
+on every product or configurable-option change, so a customer moving
+the slider from 2 back to 0 gets the package count back. Both option
+kinds need an **Admin** key on the panel entry.
 
 ## Provisioning modes
 
@@ -168,9 +189,10 @@ Set the mode per product with the **Account Type** config option:
   in the panel without losing state.
 
 **Product upgrades and downgrades.** When you change a service to a
-different WHMCS product, the module handles it via the panel's `update`
-endpoint. If the new product uses the same panel package, the module
-pushes the new bouquets, notes and `max_connections` to the line
+different WHMCS product, or a customer changes a configurable option
+such as `extra_connections`, the module handles it via the panel's
+`update` endpoint. If the product keeps the same panel package, the
+module pushes the new bouquets, notes and `max_connections` to the line
 without recreating it.
 
 If the new product uses a different panel package, the panel entry
@@ -180,8 +202,9 @@ decides what happens:
   together with the new product's bouquets and notes. The line keeps
   its username, password and expiry date, and the change costs no
   credits. Connections follow the new package unless the product sets
-  **Max Connections**, which is sent as an absolute value exactly as it
-  is on creation. `is_restreamer` follows the new package. The WHMCS
+  **Max Connections** or carries a connections configurable option,
+  which are resolved exactly as on creation and sent as one absolute
+  value. `is_restreamer` follows the new package. The WHMCS
   service is repointed to the new package so later renewals use it.
 - **Reseller key:** the module refuses the change with a clear message
   and the service has to be terminated and re-provisioned with the new
