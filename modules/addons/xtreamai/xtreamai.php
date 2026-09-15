@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.3.1',
+        'version'     => '1.4.0',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -306,6 +306,9 @@ function xtreamai_bulk_require_post(): void
 {
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
         xtreamai_json(['ok' => false, 'done' => true, 'message' => 'This action requires a POST request.']);
+    }
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
     }
 }
 
@@ -666,9 +669,19 @@ function xtreamai_ajax_bulk_sync()
     $panelId    = (int) ($_REQUEST['panel_id'] ?? 0);
     $afterId    = (int) ($_REQUEST['after_id'] ?? 0);
     $includeAll = ((string) ($_REQUEST['include_all'] ?? '0')) === '1';
+    $worker     = (int) ($_REQUEST['worker'] ?? 0);
+    $workers    = isset($_REQUEST['workers']) ? (int) $_REQUEST['workers'] : 1;
 
     if ($panelId < 1) {
         xtreamai_json(['ok' => false, 'done' => true, 'message' => 'Select a panel first.']);
+    }
+
+    if ($workers < 1 || $workers > 4 || $worker < 0 || $worker >= $workers) {
+        xtreamai_json([
+            'ok'      => false,
+            'done'    => true,
+            'message' => 'Invalid parallel request selection. Use 1 to 4 workers and a worker index below the total.',
+        ]);
     }
 
     try {
@@ -676,7 +689,7 @@ function xtreamai_ajax_bulk_sync()
         $batchSize     = 5;
         $statuses      = $includeAll ? ['Active', 'Suspended'] : ['Active'];
 
-        $rows = \WHMCS\Database\Capsule::table('mod_xtreamai_services')
+        $query = \WHMCS\Database\Capsule::table('mod_xtreamai_services')
             ->join('tblhosting', 'tblhosting.id', '=', 'mod_xtreamai_services.service_id')
             ->join('tblproducts', 'tblproducts.id', '=', 'tblhosting.packageid')
             ->leftJoin('tblclients', 'tblclients.id', '=', 'tblhosting.userid')
@@ -684,8 +697,13 @@ function xtreamai_ajax_bulk_sync()
             ->where('mod_xtreamai_services.panel_account_id', '<>', '')
             ->where('tblproducts.servertype', 'xtreamai')
             ->whereIn('tblhosting.domainstatus', $statuses)
-            ->where('mod_xtreamai_services.service_id', '>', $afterId)
-            ->orderBy('mod_xtreamai_services.service_id', 'asc')
+            ->where('mod_xtreamai_services.service_id', '>', $afterId);
+
+        if ($workers > 1) {
+            $query->whereRaw('MOD(mod_xtreamai_services.service_id, ?) = ?', [$workers, $worker]);
+        }
+
+        $rows = $query->orderBy('mod_xtreamai_services.service_id', 'asc')
             ->limit($batchSize)
             ->select([
                 'mod_xtreamai_services.service_id as service_id',
@@ -1732,6 +1750,7 @@ JS;
                 'Index lines',
                 '',
                 '',
+                '',
                 ['Batch', 'Lines indexed', 'Total indexed'],
                 $h
             );
@@ -1743,6 +1762,7 @@ JS;
                 'Link services',
                 'Include Pending, Terminated and Cancelled services',
                 '',
+                '',
                 $resultColumns,
                 $h
             );
@@ -1753,7 +1773,8 @@ JS;
                 'Runs the same line sync as the Sync line to panel button on every linked service of the panel: bouquets, notes and connection count are recalculated from each product, including the extra_connections configurable option.',
                 'Sync services',
                 'Include Suspended services',
-                'This writes to every linked line of the selected panel. Run it when the product configuration is final.',
+                'Parallel requests',
+                'This writes to every linked line of the selected panel. Run it when the product configuration is final. Each parallel request takes its own share of the services; keep the same value to resume a run that failed.',
                 $resultColumns,
                 $h
             );
@@ -1871,6 +1892,21 @@ JS;
         }
         var panel = byId('xtai-panel-select');
         if (panel) { panel.disabled = state; }
+        var parallels = document.querySelectorAll('.xtai-bulk-workers');
+        for (var j = 0; j < parallels.length; j++) {
+            parallels[j].disabled = state;
+        }
+    }
+
+    function readWorkers(root) {
+        var select = pick(root, '.xtai-bulk-workers');
+        var value = select ? parseInt(select.value, 10) : 1;
+        if (isNaN(value) || value < 1 || value > 4) { value = 1; }
+        return value;
+    }
+
+    function workerLabel(count) {
+        return count === 1 ? '1 worker' : count + ' workers';
     }
 
     function run(op) {
@@ -1892,21 +1928,175 @@ JS;
         var counts = {};
         var batches = 0;
         var processedTotal = 0;
-        var resuming = (op !== 'index' && resumeFrom[op]) ? String(resumeFrom[op]) : '';
-        var marker = (op === 'index') ? '' : (resuming !== '' ? resuming : '0');
-        var previous = null;
-        var retries = 0;
 
         running = true;
         setBusy(true);
         resetTable(op);
         renderCounters(op, counts);
-        setBar(op, 'running', resuming !== '' ? 'Resuming after service #' + resuming + '...' : 'Starting...');
 
         function finish() {
             running = false;
             setBusy(false);
         }
+
+        function runSync() {
+            var workers = readWorkers(root);
+            var markers = [];
+            var previous = [];
+            var retries = [];
+            var finished = [];
+            var active = 0;
+            var failed = false;
+            var reported = false;
+            var failText = '';
+            var note = '';
+            var stored = resumeFrom.sync;
+            var resuming = false;
+
+            if (stored && typeof stored === 'object' && stored.workers === workers && Array.isArray(stored.markers) && stored.markers.length === workers) {
+                resuming = true;
+            } else if (stored) {
+                note = 'The last run used ' + workerLabel(stored.workers) + ' and this one uses ' + workerLabel(workers) + ': starting over from the beginning. ';
+                delete resumeFrom.sync;
+            }
+
+            for (var i = 0; i < workers; i++) {
+                markers[i] = resuming ? String(stored.markers[i]) : '0';
+                previous[i] = null;
+                retries[i] = 0;
+                finished[i] = false;
+            }
+
+            if (resuming) {
+                var resumeParts = [];
+                for (var r = 0; r < workers; r++) {
+                    if (markers[r] !== '0') { resumeParts.push(markers[r]); }
+                }
+                if (resumeParts.length > 0) {
+                    note = 'Resuming from service #' + resumeParts.join(', #') + '. ';
+                }
+            }
+
+            function progressText() {
+                return note + workerLabel(workers) + ', ' + processedTotal + ' services processed';
+            }
+
+            function allDone() {
+                for (var d = 0; d < workers; d++) {
+                    if (!finished[d]) { return false; }
+                }
+                return true;
+            }
+
+            function stopWhenIdle() {
+                if (active > 0 || !failed || reported) { return; }
+                reported = true;
+                setBar('sync', 'error', failText);
+                finish();
+            }
+
+            function fail(message) {
+                if (failed) { return; }
+                failed = true;
+                failText = note + (message || 'The operation failed.');
+                var parts = [];
+                for (var f = 0; f < workers; f++) {
+                    if (markers[f] !== '0') { parts.push(markers[f]); }
+                }
+                if (parts.length > 0) {
+                    resumeFrom.sync = { workers: workers, markers: markers.slice() };
+                    failText += ' Stopped after service #' + parts.join(', #') + '. Click the button again with ' + workerLabel(workers) + ' to resume from there.';
+                }
+                stopWhenIdle();
+            }
+
+            function step(w) {
+                if (failed || finished[w]) { return; }
+                var body = new FormData();
+                body.set('token', token);
+                body.set('panel_id', panelId);
+                body.set('include_all', includeAll);
+                body.set('after_id', markers[w]);
+                body.set('worker', String(w));
+                body.set('workers', String(workers));
+
+                active++;
+                fetch(urls.sync, { method: 'POST', body: body, credentials: 'same-origin' })
+                    .then(function (response) { return response.json(); })
+                    .then(function (data) {
+                        active--;
+                        if (failed) { stopWhenIdle(); return; }
+                        if (!data || !data.ok) {
+                            fail(data && data.message ? data.message : 'The operation failed.');
+                            return;
+                        }
+                        batches++;
+                        retries[w] = 0;
+                        processedTotal += parseInt(data.processed, 10) || 0;
+                        addRows('sync', data.rows || [], keys);
+                        if (data.counts && typeof data.counts === 'object') {
+                            Object.keys(data.counts).forEach(function (key) {
+                                counts[key] = (counts[key] || 0) + (parseInt(data.counts[key], 10) || 0);
+                            });
+                        }
+                        renderCounters('sync', counts);
+                        if (data.done) {
+                            finished[w] = true;
+                            if (data.next !== undefined && data.next !== null && String(data.next) !== '') {
+                                markers[w] = String(data.next);
+                            }
+                            if (allDone()) {
+                                delete resumeFrom.sync;
+                                setBar('sync', 'done', note + 'Done. ' + processedTotal + ' services processed in ' + batches + ' batches.');
+                                finish();
+                                return;
+                            }
+                            setBar('sync', 'running', progressText());
+                            return;
+                        }
+                        var nextId = parseInt(data.next, 10);
+                        if (isNaN(nextId) || (previous[w] !== null && nextId <= previous[w])) {
+                            fail('The batch marker did not advance.');
+                            return;
+                        }
+                        previous[w] = nextId;
+                        markers[w] = String(nextId);
+                        setBar('sync', 'running', progressText());
+                        step(w);
+                    })
+                    .catch(function () {
+                        active--;
+                        if (failed) { stopWhenIdle(); return; }
+                        if (retries[w] < 2) {
+                            retries[w]++;
+                            setBar('sync', 'running', 'Worker ' + (w + 1) + ' request failed, retrying in 10 seconds (attempt ' + (retries[w] + 1) + ' of 3)...');
+                            setTimeout(function () {
+                                if (failed) { stopWhenIdle(); return; }
+                                step(w);
+                            }, 10000);
+                            return;
+                        }
+                        fail('The request failed three times. Check the connection.');
+                    });
+            }
+
+            setBar('sync', 'running', progressText());
+            for (var s = 0; s < workers; s++) {
+                step(s);
+            }
+        }
+
+        if (op === 'sync') {
+            runSync();
+            return;
+        }
+
+        var resuming = (op !== 'index' && resumeFrom[op]) ? String(resumeFrom[op]) : '';
+        var marker = (op === 'index') ? '' : (resuming !== '' ? resuming : '0');
+        var previous = null;
+        var retries = 0;
+
+        setBar(op, 'running', resuming !== '' ? 'Resuming after service #' + resuming + '...' : 'Starting...');
 
         function fail(message) {
             var text = message || 'The operation failed.';
@@ -2499,6 +2689,7 @@ function xtreamai_bulk_card(
     string $sub,
     string $button,
     string $includeLabel,
+    string $workersLabel,
     string $warning,
     array $columns,
     callable $h
@@ -2521,6 +2712,19 @@ function xtreamai_bulk_card(
             . '<span class="xtai-switch__track"></span>'
             . '<span class="xtai-switch__label">' . $h($includeLabel) . '</span>'
             . '</label>';
+    }
+
+    if ($workersLabel !== '') {
+        $html .= '<span class="xtai-panel-switch">'
+            . '<label for="xtai-bulk-' . $op . '-workers">' . $h($workersLabel) . '</label>'
+            . '<select class="xtai-bulk-workers" id="xtai-bulk-' . $op . '-workers">';
+
+        for ($parallel = 1; $parallel <= 4; $parallel++) {
+            $selected = $parallel === 3 ? ' selected' : '';
+            $html .= '<option value="' . $parallel . '"' . $selected . '>' . $parallel . '</option>';
+        }
+
+        $html .= '</select></span>';
     }
 
     $html .= '<span class="xtai-test-result xtai-bulk-status"></span>'

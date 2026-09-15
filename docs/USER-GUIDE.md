@@ -223,9 +223,12 @@ This runs the same action as the **Sync line to panel** button on each service, 
 
 1. Choose the panel. (Linking is not required to have run in the same session, but the services do need a linked line.)
 2. Tick **Include Suspended services** if suspended services should be updated too.
-3. Click **Sync services**.
+3. Set **Parallel requests** (1 to 4, 3 by default) in the same row: that is how many services are updated at the same time. Each request takes its own share of the services, so the total time is roughly divided by this number. Leave it at 1 if the panel or the server prefers one call at a time.
+4. Click **Sync services**.
 
-**Warning:** this writes to **every active linked line** of the selected panel, one by one, with the configuration of its product. Run it when the product configuration is final. Use it after you change a connection configurable option (or a product's Max Connections) so the new count reaches every customer line. Services whose product is a Sub-Reseller are reported as `skipped_sub_reseller`, and the results table marks every other service as `synced` or `error`.
+**Warning:** this writes to **every active linked line** of the selected panel, with the configuration of its product. Run it when the product configuration is final. Use it after you change a connection configurable option (or a product's Max Connections) so the new count reaches every customer line. Services whose product is a Sub-Reseller are reported as `skipped_sub_reseller`, and the results table marks every other service as `synced` or `error`.
+
+The progress bar tells you **how many requests are running and how many services have been processed**, for example "3 workers, 120 services processed", and the counters and the results table collect the outcome of all of them. If one request fails after its retries the run stops with an error, and the message names the last service already done in each request. Clicking **Sync services** again with the **same** number in **Parallel requests** resumes every request where it stopped, without syncing a service twice. If you change the number, the next run starts from the beginning: the shares are calculated from that number, so they would not match the previous run, and the progress bar says so.
 
 ---
 

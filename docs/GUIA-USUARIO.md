@@ -223,9 +223,12 @@ Ejecuta la misma acción que el botón **Sync line to panel** de cada servicio, 
 
 1. Elige el panel. (No hace falta haber vinculado en esta misma sesión, pero los servicios sí necesitan tener una línea vinculada.)
 2. Marca **Include Suspended services** si también deben actualizarse los servicios suspendidos.
-3. Pulsa **Sync services** (sincronizar servicios).
+3. Pon **Parallel requests** (de 1 a 4, 3 por defecto) en la misma fila: es cuántos servicios se actualizan a la vez. Cada petición se lleva su propia parte de los servicios, así que el tiempo total se divide aproximadamente por ese número. Déjalo en 1 si tu panel o tu servidor prefieren una sola llamada a la vez.
+4. Pulsa **Sync services** (sincronizar servicios).
 
-**Aviso:** esto escribe en **todas las líneas activas y vinculadas** del panel seleccionado, una por una, con la configuración de su producto. Ejecútalo cuando la configuración de los productos esté ya lista. Úsalo después de cambiar una opción configurable de conexiones (o el Max Connections de un producto) para que el nuevo número llegue a todas las líneas de los clientes. Los servicios cuyo producto es Sub-Reseller aparecen como `skipped_sub_reseller`, y la tabla de resultados marca el resto como `synced` o `error`.
+**Aviso:** esto escribe en **todas las líneas activas y vinculadas** del panel seleccionado, con la configuración de su producto. Ejecútalo cuando la configuración de los productos esté ya lista. Úsalo después de cambiar una opción configurable de conexiones (o el Max Connections de un producto) para que el nuevo número llegue a todas las líneas de los clientes. Los servicios cuyo producto es Sub-Reseller aparecen como `skipped_sub_reseller`, y la tabla de resultados marca el resto como `synced` o `error`.
+
+La barra de progreso te dice **cuántas peticiones están en marcha y cuántos servicios se han procesado**, por ejemplo "3 workers, 120 services processed", y los contadores y la tabla de resultados recogen el resultado de todas ellas. Si una petición falla después de sus reintentos, la ejecución se detiene con un error y el mensaje indica el último servicio ya hecho de cada petición. Si vuelves a pulsar **Sync services** con el **mismo** número en **Parallel requests**, cada petición continúa donde se quedó, sin sincronizar dos veces un servicio. Si cambias el número, la siguiente ejecución empieza desde el principio: los repartos se calculan a partir de ese número, así que no coincidirían con la ejecución anterior, y la barra de progreso lo avisa.
 
 ---
 

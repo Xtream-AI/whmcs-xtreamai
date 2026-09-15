@@ -63,10 +63,10 @@ account on the panel:
 
 The addon has a **Bulk tools** view for operations that touch many
 services at once. It runs from the browser in batches (100 services for
-linking, 5 for syncing), shows a progress bar, a counter per outcome
-and a result row per service (service id, client, username, outcome and
-message). Every operation is idempotent: running it again never
-duplicates rows and never breaks a link that already exists.
+linking, 5 per request for syncing), shows a progress bar, a counter per
+outcome and a result row per service (service id, client, username,
+outcome and message). Every operation is idempotent: running it again
+never duplicates rows and never breaks a link that already exists.
 
 1. **Index panel lines.** Reads every line of the selected panel and
    stores it locally in `mod_xtreamai_line_index` (line id, username,
@@ -85,7 +85,14 @@ duplicates rows and never breaks a link that already exists.
    linked, active service of the panel through WHMCS's local API, so the
    connection count (including the `extra_connections` configurable
    option), bouquets and notes are recomputed exactly as when you press
-   **Sync line to panel** on a single service.
+   **Sync line to panel** on a single service. The **Parallel requests**
+   selector next to the **Include Suspended services** checkbox (1 to 4,
+   3 by default) sends that many of those calls at the same time: each
+   request works on its own share of the services while the progress bar,
+   the counters and the results table are shared by all of them. Index
+   and Link always run one request at a time. If a parallel run stops
+   with an error, running it again with the same number resumes every
+   request where it stopped; a different number starts the run over.
 
 Use the Bulk tools when you migrate services from another WHMCS module
 (the panel lines already exist and carry the `WHMCS:<service id>` tag in
