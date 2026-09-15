@@ -185,6 +185,8 @@ Package changes need your panel to have been updated on or after **2026-09-14**.
 
 The **Bulk tools** tab (**Addons → Xtream AI Panel → Bulk tools**) does three jobs that would otherwise mean editing services one by one. They run in batches in your browser (100 lines per request when indexing, 100 services when linking, 5 when syncing, because each sync is one call to the panel) and show a progress bar, a counter for each result and one row per service. They are safe to run again: nothing is ever duplicated and nothing is deleted from the panel. If a run stops halfway (the panel went away, the browser tab was closed), just run it again: indexing starts over from scratch, and linking refuses to run until the index has been completed once.
 
+A run that stops keeps its position in the browser, so it can be resumed after reloading the page or even after logging in again: open **Bulk tools** on the same panel, click the same button and the run carries on from the last service it did. While a run is active the page also refreshes the WHMCS security token every four minutes, which keeps your admin session alive during the long runs.
+
 The **Panel** dropdown at the top decides which panel everything below works on. Change it and the page reloads on that panel.
 
 ### 8.1 Index panel lines

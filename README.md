@@ -95,6 +95,10 @@ never duplicates rows and never breaks a link that already exists.
    and Link always run one request at a time. If a parallel run stops
    with an error, running it again with the same number resumes every
    request where it stopped; a different number starts the run over.
+   A stopped run can be resumed after a page reload or a new login
+   (each panel keeps its position in the browser), and the page
+   refreshes the security token every four minutes so a long run does
+   not outlive the admin session.
 
 Use the Bulk tools when you migrate services from another WHMCS module
 (the panel lines already exist and carry the `WHMCS:<service id>` tag in

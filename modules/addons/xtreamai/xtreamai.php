@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.4.1',
+        'version'     => '1.4.2',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -73,6 +73,10 @@ function xtreamai_output($vars)
 
     if ($action === 'ajax_bulk_sync') {
         xtreamai_ajax_bulk_sync();
+    }
+
+    if ($action === 'ajax_bulk_token') {
+        xtreamai_ajax_bulk_token();
     }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -398,6 +402,20 @@ function xtreamai_ajax_test_connection()
     } catch (\Throwable $e) {
         xtreamai_json(['ok' => false, 'message' => xtreamai_safe_message($e)]);
     }
+}
+
+function xtreamai_ajax_bulk_token()
+{
+    header('Content-Type: application/json; charset=utf-8');
+
+    if (empty($_SESSION['adminid'])) {
+        xtreamai_json([
+            'ok'      => false,
+            'message' => 'Your WHMCS session has ended. Log in again, open Bulk tools and click the button: the run resumes from the saved position.',
+        ]);
+    }
+
+    xtreamai_json(['ok' => true, 'token' => xtreamai_token_plain()]);
 }
 
 function xtreamai_ajax_bulk_index()
@@ -1791,6 +1809,7 @@ JS;
                 'index' => xtreamai_link($modulelink, ['action' => 'ajax_bulk_index']),
                 'link'  => xtreamai_link($modulelink, ['action' => 'ajax_bulk_link']),
                 'sync'  => xtreamai_link($modulelink, ['action' => 'ajax_bulk_sync']),
+                'token' => xtreamai_link($modulelink, ['action' => 'ajax_bulk_token']),
             ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
             $bulkScript = <<<'JS'
@@ -1817,6 +1836,10 @@ JS;
     };
     var running = false;
     var resumeFrom = {};
+    var keepAlive = null;
+    var failRun = null;
+    var sessionMessage = 'Your WHMCS session has ended. Log in again, open Bulk tools and click the button: the run resumes from the saved position.';
+    var tokenError = 'Invalid security token';
 
     function byId(id) {
         return document.getElementById(id);
@@ -1824,6 +1847,93 @@ JS;
 
     function card(op) {
         return byId('xtai-bulk-' + op);
+    }
+
+    function panelIdNow() {
+        var panelEl = byId('xtai-panel-select');
+        return panelEl ? String(panelEl.value || '') : '';
+    }
+
+    function resumeKey(op) {
+        return 'xtai_bulk_resume:' + panelIdNow() + ':' + op;
+    }
+
+    function storeResume(op, value) {
+        try {
+            window.localStorage.setItem(resumeKey(op), JSON.stringify(value));
+        } catch (e) {
+            return;
+        }
+    }
+
+    function loadResume(op) {
+        try {
+            var raw = window.localStorage.getItem(resumeKey(op));
+            if (!raw) { return null; }
+            var parsed = JSON.parse(raw);
+            return (parsed && typeof parsed === 'object') ? parsed : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function dropResume(op) {
+        try {
+            window.localStorage.removeItem(resumeKey(op));
+        } catch (e) {
+            return;
+        }
+    }
+
+    function refreshToken() {
+        return fetch(urls.token, { method: 'GET', credentials: 'same-origin' })
+            .then(function (response) { return response.text(); })
+            .then(function (body) {
+                var data = null;
+                try {
+                    data = JSON.parse(body);
+                } catch (e) {
+                    data = null;
+                }
+                if (!data || !data.ok || !data.token) { return 'expired'; }
+                token = String(data.token);
+                return 'ok';
+            })
+            .catch(function () { return 'network'; });
+    }
+
+    function stopForSession() {
+        if (!failRun) { return; }
+        failRun(sessionMessage);
+    }
+
+    function restoreResume() {
+        var currentPanel = panelIdNow();
+        if (currentPanel === '' || currentPanel === '0') { return; }
+
+        var linkState = loadResume('link');
+        var linkMarker = (linkState && linkState.marker !== undefined && linkState.marker !== null) ? String(linkState.marker) : '';
+        if (linkMarker !== '' && linkMarker !== '0') {
+            resumeFrom.link = linkMarker;
+            setBar('link', 'error', 'A previous run stopped after service #' + linkMarker + '. Click the button to resume.');
+            return;
+        }
+
+        var syncState = loadResume('sync');
+        if (!syncState || !Array.isArray(syncState.markers) || syncState.markers.length < 1) { return; }
+
+        var parts = [];
+        var markers = [];
+        for (var i = 0; i < syncState.markers.length; i++) {
+            var marker = String(syncState.markers[i]);
+            markers.push(marker);
+            if (marker !== '0') { parts.push(marker); }
+        }
+
+        resumeFrom.sync = { workers: parseInt(syncState.workers, 10) || 1, markers: markers };
+        if (parts.length > 0) {
+            setBar('sync', 'error', 'A previous run stopped after service #' + parts.join(', #') + '. Click the button to resume.');
+        }
     }
 
     function pick(root, selector) {
@@ -1942,9 +2052,22 @@ JS;
         resetTable(op);
         renderCounters(op, counts);
 
+        if (keepAlive) {
+            clearInterval(keepAlive);
+        }
+        keepAlive = setInterval(function () {
+            refreshToken().then(function (result) {
+                if (result === 'expired') { stopForSession(); }
+            });
+        }, 240000);
+
         function finish() {
             running = false;
             setBusy(false);
+            if (keepAlive) {
+                clearInterval(keepAlive);
+                keepAlive = null;
+            }
         }
 
         function runSync() {
@@ -1960,18 +2083,21 @@ JS;
             var note = '';
             var stored = resumeFrom.sync;
             var resuming = false;
+            var tokenRetried = [];
 
             if (stored && typeof stored === 'object' && stored.workers === workers && Array.isArray(stored.markers) && stored.markers.length === workers) {
                 resuming = true;
             } else if (stored) {
                 note = 'The last run used ' + workerLabel(stored.workers) + ' and this one uses ' + workerLabel(workers) + ': starting over from the beginning. ';
                 delete resumeFrom.sync;
+                dropResume('sync');
             }
 
             for (var i = 0; i < workers; i++) {
                 markers[i] = resuming ? String(stored.markers[i]) : '0';
                 previous[i] = null;
                 retries[i] = 0;
+                tokenRetried[i] = false;
                 finished[i] = false;
             }
 
@@ -2013,10 +2139,12 @@ JS;
                 }
                 if (parts.length > 0) {
                     resumeFrom.sync = { workers: workers, markers: markers.slice() };
+                    storeResume('sync', resumeFrom.sync);
                     failText += ' Stopped after service #' + parts.join(', #') + '. Click the button again with ' + workerLabel(workers) + ' to resume from there.';
                 }
                 stopWhenIdle();
             }
+            failRun = fail;
 
             function step(w) {
                 if (failed || finished[w]) { return; }
@@ -2032,14 +2160,30 @@ JS;
                 fetch(urls.sync, { method: 'POST', body: body, credentials: 'same-origin' })
                     .then(function (response) { return response.json(); })
                     .then(function (data) {
-                        active--;
-                        if (failed) { stopWhenIdle(); return; }
+                        if (failed) { active--; stopWhenIdle(); return; }
                         if (!data || !data.ok) {
-                            fail(data && data.message ? data.message : 'The operation failed.');
+                            var message = (data && data.message) ? String(data.message) : 'The operation failed.';
+                            if (message.indexOf(tokenError) !== -1 && !tokenRetried[w]) {
+                                tokenRetried[w] = true;
+                                refreshToken().then(function (result) {
+                                    active--;
+                                    if (failed) { stopWhenIdle(); return; }
+                                    if (result !== 'ok') {
+                                        fail(sessionMessage);
+                                        return;
+                                    }
+                                    step(w);
+                                });
+                                return;
+                            }
+                            active--;
+                            fail(message);
                             return;
                         }
+                        active--;
                         batches++;
                         retries[w] = 0;
+                        tokenRetried[w] = false;
                         processedTotal += parseInt(data.processed, 10) || 0;
                         addRows('sync', data.rows || [], keys);
                         if (data.counts && typeof data.counts === 'object') {
@@ -2055,6 +2199,7 @@ JS;
                             }
                             if (allDone()) {
                                 delete resumeFrom.sync;
+                                dropResume('sync');
                                 setBar('sync', 'done', note + 'Done. ' + processedTotal + ' services processed in ' + batches + ' batches.');
                                 finish();
                                 return;
@@ -2103,6 +2248,7 @@ JS;
         var marker = (op === 'index') ? '' : (resuming !== '' ? resuming : '0');
         var previous = null;
         var retries = 0;
+        var tokenRetried = false;
 
         setBar(op, 'running', resuming !== '' ? 'Resuming after service #' + resuming + '...' : 'Starting...');
 
@@ -2110,11 +2256,13 @@ JS;
             var text = message || 'The operation failed.';
             if (op !== 'index' && marker !== '0') {
                 resumeFrom[op] = marker;
+                storeResume(op, { marker: marker });
                 text += ' Stopped after service #' + marker + '. Click the button again to resume from there.';
             }
             setBar(op, 'error', text);
             finish();
         }
+        failRun = fail;
 
         function step() {
             var body = new FormData();
@@ -2127,11 +2275,24 @@ JS;
                 .then(function (response) { return response.json(); })
                 .then(function (data) {
                     if (!data || !data.ok) {
-                        fail(data && data.message ? data.message : 'The operation failed.');
+                        var message = (data && data.message) ? String(data.message) : 'The operation failed.';
+                        if (message.indexOf(tokenError) !== -1 && !tokenRetried) {
+                            tokenRetried = true;
+                            refreshToken().then(function (result) {
+                                if (result !== 'ok') {
+                                    fail(sessionMessage);
+                                    return;
+                                }
+                                step();
+                            });
+                            return;
+                        }
+                        fail(message);
                         return;
                     }
                     batches++;
                     retries = 0;
+                    tokenRetried = false;
 
                     if (op === 'index') {
                         var indexed = parseInt(data.indexed, 10);
@@ -2169,6 +2330,7 @@ JS;
                     renderCounters(op, counts);
                     if (data.done) {
                         delete resumeFrom[op];
+                        dropResume(op);
                         setBar(op, 'done', 'Done. ' + processedTotal + ' services processed in ' + batches + ' batches.');
                         finish();
                         return;
@@ -2196,6 +2358,8 @@ JS;
 
         step();
     }
+
+    restoreResume();
 
     var runButtons = document.querySelectorAll('.xtai-bulk-run');
     for (var i = 0; i < runButtons.length; i++) {
