@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.4.0',
+        'version'     => '1.4.1',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -229,6 +229,10 @@ function xtreamai_save_panel()
     if ($m3uUrl !== '' && !preg_match('#^https?://#i', $m3uUrl)) {
         throw new \RuntimeException('M3U URL must start with http:// or https://');
     }
+    $epgUrl  = trim((string) ($_POST['epg_url'] ?? ''));
+    if ($epgUrl !== '' && !preg_match('#^https?://#i', $epgUrl)) {
+        throw new \RuntimeException('EPG URL must start with http:// or https://');
+    }
     $password = (string) ($_POST['password'] ?? '');
     $verifySsl = empty($_POST['verify_ssl']) ? 0 : 1;
     $active   = empty($_POST['active']) ? 0 : 1;
@@ -256,6 +260,7 @@ function xtreamai_save_panel()
         'name'       => $name,
         'api_url'    => $apiUrl,
         'm3u_url'    => $m3uUrl,
+        'epg_url'    => $epgUrl,
         'verify_ssl' => $verifySsl,
         'active'     => $active,
         'key_type'   => $keyType,
@@ -899,6 +904,7 @@ function xtreamai_render($modulelink, $view, $flash, $editId, $panelId)
         'name'       => '',
         'api_url'    => '',
         'm3u_url'    => '',
+        'epg_url'    => '',
         'verify_ssl' => 1,
         'active'     => 1,
         'key_type'   => 'reseller',
@@ -913,6 +919,7 @@ function xtreamai_render($modulelink, $view, $flash, $editId, $panelId)
                     'name'       => (string) $panel->name,
                     'api_url'    => (string) $panel->api_url,
                     'm3u_url'    => isset($panel->m3u_url) ? (string) $panel->m3u_url : '',
+                    'epg_url'    => isset($panel->epg_url) ? (string) $panel->epg_url : '',
                     'verify_ssl' => (int) $panel->verify_ssl,
                     'active'     => (int) $panel->active,
                     'key_type'   => (string) ($panel->key_type ?? 'reseller'),
@@ -928,6 +935,7 @@ function xtreamai_render($modulelink, $view, $flash, $editId, $panelId)
     $fName      = $h($form['name']);
     $fApiUrl    = $h($form['api_url']);
     $fM3uUrl    = $h($form['m3u_url']);
+    $fEpgUrl    = $h($form['epg_url']);
     $fVerifySsl = $form['verify_ssl'] ? ' checked' : '';
     $fActive    = $form['active'] ? ' checked' : '';
     $fKeyType   = (string) ($form['key_type'] ?? 'reseller');
@@ -2448,7 +2456,8 @@ JS;
 <div class="xtai-form-grid">
 <div class="xtai-field"><label>Name</label><input type="text" name="name" value="' . $fName . '" required><span class="xtai-help">A friendly label for this panel.</span></div>
 <div class="xtai-field"><label>API URL</label><input type="text" name="api_url" value="' . $fApiUrl . '" placeholder="https://panel.example.com" required><span class="xtai-help">The panel base URL, without a trailing slash.</span></div>
-<div class="xtai-field"><label>M3U URL</label><input type="text" name="m3u_url" value="' . $fM3uUrl . '" placeholder="optional"><span class="xtai-help">Optional M3U URL shared with clients.</span></div>
+<div class="xtai-field"><label>M3U URL</label><input type="text" name="m3u_url" value="' . $fM3uUrl . '" placeholder="optional"><span class="xtai-help">Optional M3U URL shared with clients. {username} and {password} are replaced with each client\'s credentials.</span></div>
+<div class="xtai-field"><label>EPG URL</label><input type="text" name="epg_url" value="' . $fEpgUrl . '" placeholder="optional"><span class="xtai-help">Optional EPG (XMLTV) URL shared with clients. Both URLs accept {username} and {password}, replaced with each client\'s credentials.</span></div>
 <div class="xtai-field"><label>Access key</label><input type="password" name="password" autocomplete="new-password"' . ($editing ? '' : ' required') . '><span class="xtai-help">' . ($editing ? 'Leave blank to keep the current access key.' : 'API access key (stored encrypted).') . '</span></div>
 <div class="xtai-field xtai-field--full">
 <label>SSL verification</label>

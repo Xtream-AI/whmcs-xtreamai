@@ -24,7 +24,9 @@ the lifecycle:
   has to be terminated and re-provisioned.
 - Next-due-date sync on create and renew (skipped for one-time and free
   billing cycles).
-- Client-area card with credentials, M3U URL and active connections.
+- Client-area card with credentials, M3U URL, EPG URL and active
+  connections. Both URLs accept `{username}` and `{password}`
+  placeholders, replaced per client (URL-encoded).
 - Admin service tab with a read-only panel/line summary and a
   **Sync line to panel** button that pushes the current product's
   bouquets, notes and `max_connections` to the panel line without a
@@ -169,7 +171,12 @@ Keep the token safe: paste it into the WHMCS addon in the next step.
 ## Configure
 
 1. **Addons → Xtream AI Panel → Panels → Add Panel.** Set:
-   - Name, API URL, optional M3U URL, Access key.
+   - Name, API URL, optional M3U URL, optional EPG URL, Access key.
+     Both URLs accept the `{username}` and `{password}` placeholders,
+     replaced with each client's credentials:
+     `http://panel.example.com:8080/get.php?username={username}&password={password}&type=m3u_plus&output=ts`
+     and
+     `http://panel.example.com:8080/xmltv.php?username={username}&password={password}`.
    - SSL verification (on by default).
    - **Key type:** *Reseller* or *Admin*.
    - **Admin owner member_id:** required when Key type is Admin. It is

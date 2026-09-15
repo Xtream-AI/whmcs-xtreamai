@@ -69,7 +69,8 @@ El "panel" es el servidor Xtream AI con el que el módulo va a trabajar.
 |---|---|---|
 | **Name** | Un nombre interno para que tú lo reconozcas. | Por ejemplo: `Mi panel principal`. |
 | **API URL** | La dirección web de tu panel. | Por ejemplo: `https://panel.example.com` (sin barra final). |
-| **M3U URL** | *Opcional.* El enlace M3U que verá tu cliente para reproducir la IPTV. | Puedes dejarlo vacío si no lo usas. |
+| **M3U URL** | *Opcional.* El enlace M3U que verá tu cliente para reproducir la IPTV. Puedes usar `{username}` y `{password}` dentro y el módulo los sustituye por las credenciales de cada cliente (codificadas para URL). | Por ejemplo: `http://panel.example.com:8080/get.php?username={username}&password={password}&type=m3u_plus&output=ts`. Puedes dejarlo vacío si no lo usas. |
+| **EPG URL** | *Opcional.* El enlace EPG (XMLTV) que verá tu cliente para la guía de programación. Acepta los mismos marcadores `{username}` y `{password}`. | Por ejemplo: `http://panel.example.com:8080/xmltv.php?username={username}&password={password}`. Puedes dejarlo vacío si no lo usas. |
 | **Access key** | Tu API key (la llave secreta del panel). Se guarda **cifrada**. | Pégalo aquí. |
 | **Key type** | Si la key que acabas de pegar es una key de **Reseller** o de **Admin**. | Elige **Reseller** para configuraciones solo de líneas. Elige **Admin** si vas a vender productos Sub-Reseller, o si quieres que los cambios de producto en WHMCS cambien el paquete del panel de una línea viva. |
 | **Admin owner member_id** | El member id del panel que será dueño de las líneas creadas a través de esta entrada. Solo se requiere cuando **Key type** es **Admin**. | Introduce el member id numérico. Déjalo vacío si es una Reseller key. |
@@ -148,6 +149,7 @@ Cuando el cliente entra en su área de cliente de WHMCS y abre su servicio, ve u
 - **Expiry Date** — cuándo vence la línea (en líneas normales).
 - **Credits** — sus créditos (solo en cuentas Sub-Reseller).
 - **Connection URL** — su enlace M3U, si lo configuraste en el panel.
+- **EPG URL** — su enlace EPG (XMLTV), si lo configuraste en el panel.
 - **Active Connections** — sus conexiones activas en ese momento (qué está viendo, desde qué IP y cuánto lleva).
 
 Si la línea todavía no está lista, verá el aviso de que debe esperar a que termine la creación.

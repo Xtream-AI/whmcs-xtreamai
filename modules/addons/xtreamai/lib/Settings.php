@@ -87,6 +87,9 @@ final class Settings
                 if (!$schema->hasColumn(self::PANELS_TABLE, 'admin_owner_member_id')) {
                     $table->integer('admin_owner_member_id')->nullable();
                 }
+                if (!$schema->hasColumn(self::PANELS_TABLE, 'epg_url')) {
+                    $table->text('epg_url')->nullable();
+                }
             });
         }
 

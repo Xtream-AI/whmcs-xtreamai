@@ -763,6 +763,25 @@ function xtreamai_esc(string $value): string
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
 
+function xtreamai_fillClientUrl(string $template, string $username, string $password): string
+{
+    if ($template === '') {
+        return '';
+    }
+
+    $filled = preg_replace_callback(
+        '/\{(username|password)\}/i',
+        static function (array $matches) use ($username, $password): string {
+            return strtolower($matches[1]) === 'username'
+                ? rawurlencode($username)
+                : rawurlencode($password);
+        },
+        $template
+    );
+
+    return is_string($filled) ? $filled : $template;
+}
+
 function xtreamai_expiryDate(array $line): string
 {
     if (empty($line['expires_at'])) {
@@ -1106,10 +1125,10 @@ function xtreamai_sync(array $params)
         $notes = xtreamai_renderNotes($params);
         $maxConn = xtreamai_maxConnectionsForService($params, $panelId, xtreamai_currentPackageIdForService($params));
 
-        $fields = [
-            'bouquets' => $bouquets,
-            'notes' => $notes,
-        ];
+        $fields = ['notes' => $notes];
+        if ($bouquets !== []) {
+            $fields['bouquets'] = $bouquets;
+        }
         if ($maxConn > 0) {
             $fields['max_connections'] = $maxConn;
         }
@@ -1246,6 +1265,7 @@ function xtreamai_ClientArea(array $params)
     $status = (string) ($params['status'] ?? '');
     $expires = '—';
     $m3uUrl = '';
+    $epgUrl = '';
     $credits = '';
     $connections = [];
     $connectionsCount = 0;
@@ -1274,15 +1294,21 @@ function xtreamai_ClientArea(array $params)
                 if ($panel && !empty($panel->m3u_url)) {
                     $m3uUrl = (string) $panel->m3u_url;
                 }
+                if ($panel && !empty($panel->epg_url)) {
+                    $epgUrl = (string) $panel->epg_url;
+                }
             }
         }
 
-        if ($m3uUrl === '') {
+        if ($m3uUrl === '' || $epgUrl === '') {
             $panelId = xtreamai_panelIdForService($params);
             if ($panelId > 0) {
                 $panel = \WhmcsXtreamAI\PanelStore::find($panelId);
-                if ($panel && !empty($panel->m3u_url)) {
+                if ($panel && !empty($panel->m3u_url) && $m3uUrl === '') {
                     $m3uUrl = (string) $panel->m3u_url;
+                }
+                if ($panel && !empty($panel->epg_url) && $epgUrl === '') {
+                    $epgUrl = (string) $panel->epg_url;
                 }
             }
         }
@@ -1317,6 +1343,9 @@ function xtreamai_ClientArea(array $params)
 
     }
 
+    $m3uUrl = xtreamai_fillClientUrl($m3uUrl, $username, $password);
+    $epgUrl = xtreamai_fillClientUrl($epgUrl, $username, $password);
+
     return [
         'tabOverviewReplacementTemplate' => 'templates/overview.tpl',
         'templateVariables' => [
@@ -1325,6 +1354,7 @@ function xtreamai_ClientArea(array $params)
             'status' => $status,
             'expires' => $expires,
             'm3u_url' => $m3uUrl,
+            'epg_url' => $epgUrl,
             'credits' => $credits,
             'account_type' => $accountType,
             'connections' => $connections,

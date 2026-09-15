@@ -71,6 +71,15 @@
                     </dd>
                 </div>
                 {/if}
+                {if $epg_url}
+                <div class="xtai-client-row">
+                    <dt>EPG URL</dt>
+                    <dd>
+                        <code class="xtai-client-code" id="xtai-line-epg">{$epg_url|escape}</code>
+                        <button type="button" class="btn btn-default btn-sm xtai-copy-btn" data-copy-target="xtai-line-epg" data-label="Copy">Copy</button>
+                    </dd>
+                </div>
+                {/if}
             </dl>
             {literal}
             <script>

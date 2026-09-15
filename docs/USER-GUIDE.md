@@ -69,7 +69,8 @@ The "panel" is the Xtream AI server the module will work with.
 |---|---|---|
 | **Name** | An internal name so you can recognize it. | For example: `My main panel`. |
 | **API URL** | The web address of your panel. | For example: `https://panel.example.com` (no trailing slash). |
-| **M3U URL** | *Optional.* The M3U link your client will see to play the IPTV. | You can leave it empty if you don't use it. |
+| **M3U URL** | *Optional.* The M3U link your client will see to play the IPTV. You can use `{username}` and `{password}` inside it and the module replaces them with each client's credentials (URL-encoded). | For example: `http://panel.example.com:8080/get.php?username={username}&password={password}&type=m3u_plus&output=ts`. Leave it empty if you don't use it. |
+| **EPG URL** | *Optional.* The EPG (XMLTV) link your client will see for the TV guide. It accepts the same `{username}` and `{password}` placeholders. | For example: `http://panel.example.com:8080/xmltv.php?username={username}&password={password}`. Leave it empty if you don't use it. |
 | **Access key** | Your API key (the panel's secret key). It is stored **encrypted**. | Paste it here. |
 | **Key type** | Whether the key you just pasted is a **Reseller** key or an **Admin** key. | Choose **Reseller** for line-only setups. Choose **Admin** if you plan to sell Sub-Reseller products, or if you want WHMCS product upgrades and downgrades to change the panel package of a live line. |
 | **Admin owner member_id** | The panel member id that will own the lines created through this panel entry. Only required when **Key type** is **Admin**. | Enter the numeric member id. Leave empty for a Reseller key. |
@@ -148,6 +149,7 @@ When the customer opens their WHMCS client area and opens their service, they se
 - **Expiry Date** — when the line expires (for normal lines).
 - **Credits** — their credits (only for Sub-Reseller accounts).
 - **Connection URL** — their M3U link, if you set it on the panel.
+- **EPG URL** — their EPG (XMLTV) link, if you set it on the panel.
 - **Active Connections** — their active connections right now (what they are watching, from which IP, and for how long).
 
 If the line isn't ready yet, they will see a notice telling them to wait for provisioning to finish.
