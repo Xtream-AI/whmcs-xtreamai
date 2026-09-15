@@ -57,7 +57,43 @@ If you can see those two `xtreamai.php` files in place, the installation is comp
 
 ---
 
-## 4. Your first panel
+## 4. Updating the module
+
+The addon checks GitHub once a day for a newer release. When there is one, the
+**Dashboard** shows a card that says **Version X available**, with the release
+name, a short excerpt of the release notes and a link to the release page. The
+**Check for updates** button forces that check at any time.
+
+**Update now** does the whole update for you:
+
+1. It downloads the release file from GitHub and checks its SHA256 checksum. If
+   the checksum does not match, it stops and changes nothing.
+2. It extracts the archive and checks that it contains both module folders and
+   that its version is the one the release announces.
+3. It replaces `modules/servers/xtreamai` and `modules/addons/xtreamai`. The
+   previous version of each folder is kept next to it, named
+   `xtreamai.bak-<version>-<date>` (only the newest backup of each folder is
+   kept), and its own temporary files are deleted.
+
+At the end you see **Updated to X. Reload the page.** The page does **not**
+reload itself: press F5 (or the reload button) on the addon page to run the new
+version.
+
+**When the button is missing.** **Update now** needs the PHP extensions
+`curl` and `phar`, a writable temporary directory and write permission on the
+two module folders and their parent folders. When the server does not allow
+that, the card says why and shows the manual instructions instead: download
+`whmcs-xtreamai-<version>.tar.gz` from the
+[Releases page](https://github.com/Xtream-AI/whmcs-xtreamai/releases) and copy
+the two folders it contains (`modules/servers/xtreamai` and
+`modules/addons/xtreamai`) over the existing ones.
+
+Your panels, API keys, product settings and the WHMCS-to-line links are stored
+in the WHMCS database, so updating the files never touches them.
+
+---
+
+## 5. Your first panel
 
 The "panel" is the Xtream AI server the module will work with.
 
@@ -96,7 +132,7 @@ The "panel" is the Xtream AI server the module will work with.
 
 ---
 
-## 5. Your first product
+## 6. Your first product
 
 Now create the product you want to sell.
 
@@ -139,7 +175,7 @@ You don't need to do anything else at that point.
 
 ---
 
-## 6. What your customer sees
+## 7. What your customer sees
 
 When the customer opens their WHMCS client area and opens their service, they see a card with:
 
@@ -156,7 +192,7 @@ If the line isn't ready yet, they will see a notice telling them to wait for pro
 
 ---
 
-## 7. Day-to-day use
+## 8. Day-to-day use
 
 These are the actions you will take as an administrator and what they do in the panel:
 
@@ -181,7 +217,7 @@ Package changes need your panel to have been updated on or after **2026-09-14**.
 
 ---
 
-## 8. Bulk tools
+## 9. Bulk tools
 
 The **Bulk tools** tab (**Addons → Xtream AI Panel → Bulk tools**) does three jobs that would otherwise mean editing services one by one. They run in batches in your browser (100 lines per request when indexing, 100 services when linking, 5 when syncing, because each sync is one call to the panel) and show a progress bar, a counter for each result and one row per service. They are safe to run again: nothing is ever duplicated and nothing is deleted from the panel. If a run stops halfway (the panel went away, the browser tab was closed), just run it again: indexing starts over from scratch, and linking refuses to run until the index has been completed once.
 
@@ -189,7 +225,7 @@ A run that stops keeps its position in the browser, so it can be resumed after r
 
 The **Panel** dropdown at the top decides which panel everything below works on. Change it and the page reloads on that panel.
 
-### 8.1 Index panel lines
+### 9.1 Index panel lines
 
 This reads the lines that already exist on the panel and keeps a local copy of them: line id, username, expiry, status, and the WHMCS service number found in the line notes.
 
@@ -199,7 +235,7 @@ This reads the lines that already exist on the panel and keeps a local copy of t
 
 Run this before the other two tools. It only reads from the panel, so it changes nothing there. If you run it again, the index of that panel is rebuilt from scratch.
 
-### 8.2 Link existing services
+### 9.2 Link existing services
 
 This connects WHMCS services that have no panel line recorded yet to the lines that already exist. It looks for the **service number in the line notes** first (the **Line Notes Template** of General Settings, `WHMCS:{service_id}` by default) and falls back to the **username**.
 
@@ -221,7 +257,7 @@ For every service you get one row with the service id, the client, the username 
 
 Nothing is created or deleted on the panel: this tool only restores the link between WHMCS and the line.
 
-### 8.3 Sync all services
+### 9.3 Sync all services
 
 This runs the same action as the **Sync line to panel** button on each service, but for all of them at once: the bouquets, the notes and the connection count (Max Connections plus any connections configurable option such as `extra_connections`) of each product are recalculated and pushed to its line on the panel.
 
@@ -236,7 +272,7 @@ The progress bar tells you **how many requests are running and how many services
 
 ---
 
-## 9. Sub-Reseller products, explained simply
+## 10. Sub-Reseller products, explained simply
 
 **What they are for:** a Sub-Reseller product gives your customer their **own reseller account** on the panel, with their **own credits**. This lets your customer resell lines on their own.
 
@@ -255,11 +291,11 @@ You don't need to choose Package or Bouquets for this type: the module ignores t
 
 ---
 
-## 10. All the addon screens, one by one
+## 11. All the addon screens, one by one
 
 Inside **Addons → Xtream AI Panel** you have these tabs:
 
-**Dashboard** — the summary. It shows cards with: **Credits**, **Panels** (how many panels there are and how many are healthy), **Sub-Resellers**, and **Lines**. Below that, the status of each panel and some quick links.
+**Dashboard** — the summary. It shows cards with: **Credits**, **Panels** (how many panels there are and how many are healthy), **Sub-Resellers**, and **Lines**. At the top it also shows the update card when a newer version of the module exists (section 4). Below that, the status of each panel and some quick links.
 
 **Panels** — the list of your panels with their status, SSL, last check, and actions (Test, Edit, Activate/Deactivate, Delete). The **Add Panel** / **Edit Panel** form is also here.
 
@@ -269,7 +305,7 @@ Inside **Addons → Xtream AI Panel** you have these tabs:
 
 **Catalog** — to see what is on your panel: **Live Streams** (live channels) and **VOD** (movies and series). Each has its own search box.
 
-**Bulk tools** — the three operations that work on many services at once: **Index panel lines**, **Link existing services** and **Sync all services**. See section 8.
+**Bulk tools** — the three operations that work on many services at once: **Index panel lines**, **Link existing services** and **Sync all services**. See section 9.
 
 **Module Logs** — a history of what the module has done (each call to the panel API), with date, action and a short summary.
 
@@ -294,7 +330,7 @@ When you're done, click **Save Settings**.
 
 ---
 
-## 11. Common problems
+## 12. Common problems
 
 | Message you might see | What it means | What to do |
 |---|---|---|
@@ -310,7 +346,7 @@ When you're done, click **Save Settings**.
 
 ---
 
-## 12. Frequently asked questions
+## 13. Frequently asked questions
 
 **Do I need to be a panel administrator?**
 For Line products, no. For Sub-Reseller products, yes: the panel key must be an admin key. Changing the panel package of a line that is already running (a WHMCS product upgrade or downgrade) also needs an admin key; with a reseller key you terminate the service and re-provision it.
@@ -325,7 +361,7 @@ Yes. Add as many as you want in Panels, and choose which one each product uses.
 Go to **Addons → Xtream AI Panel → Bulk tools**, choose your panel in the dropdown, click **Index lines** in the first card and, when it finishes, click **Link services** in the second card. Each service is matched to its line by the WHMCS service number stored in the line notes (template `WHMCS:{service_id}`) or, if there is no tag, by the username: the link is restored without creating, changing or deleting anything on the panel. Afterwards you can run **Sync services** in the third card so every line picks up the bouquets and the connection count of its product.
 
 **Can my customers choose how many connections they want?**
-Yes. Add a WHMCS Configurable Option named `extra_connections` (a quantity from 0 upwards, priced per unit) to the product and the module adds it on top of the package's connections, on order and every time the customer changes it later. See "Letting customers buy extra connections" in section 5.
+Yes. Add a WHMCS Configurable Option named `extra_connections` (a quantity from 0 upwards, priced per unit) to the product and the module adds it on top of the package's connections, on order and every time the customer changes it later. See "Letting customers buy extra connections" in section 6.
 
 **Does it work with my PHP version?**
 Yes, with **PHP 7.2 or higher**.
@@ -333,9 +369,12 @@ Yes, with **PHP 7.2 or higher**.
 **Is there a license key?**
 No, the module is free and open source (MIT).
 
+**How do I update the module?**
+Open **Addons → Xtream AI Panel → Dashboard**. When a newer version exists, the card at the top shows its release notes and an **Update now** button that downloads, verifies and installs it; if your server does not allow that, the same card shows the manual instructions. The previous files are kept next to the module as `xtreamai.bak-<version>-<date>`. See section 4.
+
 ---
 
-## 13. Uninstalling
+## 14. Uninstalling
 
 1. In **System Settings → Addon Modules**, find **Xtream AI Panel** and click **Deactivate**. Your data is **kept**, in case you want to reactivate it later.
 2. To remove it completely, delete the two folders using the File Manager or FTP:

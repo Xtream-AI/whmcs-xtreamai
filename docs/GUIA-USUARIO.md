@@ -57,7 +57,45 @@ Si ves esos dos archivos `xtreamai.php` en su sitio, la instalación está compl
 
 ---
 
-## 4. Tu primer panel
+## 4. Actualizar el módulo
+
+El addon comprueba una vez al día si hay una versión nueva en GitHub. Cuando la
+hay, el **Dashboard** muestra una tarjeta con **Version X available**, el nombre
+de la versión, un extracto de las notas de la release y un enlace a su página.
+El botón **Check for updates** (comprobar actualizaciones) fuerza esa
+comprobación cuando tú quieras.
+
+**Update now** (actualizar ahora) hace toda la actualización por ti:
+
+1. Descarga el archivo de la release desde GitHub y comprueba su checksum
+   SHA256. Si no coincide, se detiene y no cambia nada.
+2. Descomprime el archivo y comprueba que contiene las dos carpetas del módulo y
+   que su versión es la que anuncia la release.
+3. Sustituye `modules/servers/xtreamai` y `modules/addons/xtreamai`. La versión
+   anterior de cada carpeta se guarda a su lado con el nombre
+   `xtreamai.bak-<versión>-<fecha>` (solo se conserva la copia más reciente de
+   cada carpeta) y borra sus propios archivos temporales.
+
+Al terminar verás **Updated to X. Reload the page.** La página **no** se recarga
+sola: pulsa F5 (o el botón de recargar) en la página del addon para usar la
+versión nueva.
+
+**Si no ves el botón.** **Update now** necesita las extensiones `curl` y `phar`
+de PHP, un directorio temporal escribible y permiso de escritura en las dos
+carpetas del módulo y en sus carpetas superiores. Cuando el servidor no lo
+permite, la tarjeta explica por qué y muestra las instrucciones manuales:
+descarga `whmcs-xtreamai-<versión>.tar.gz` de la
+[página de releases](https://github.com/Xtream-AI/whmcs-xtreamai/releases) y
+copia encima las dos carpetas que contiene (`modules/servers/xtreamai` y
+`modules/addons/xtreamai`).
+
+Tus paneles, API keys, ajustes de productos y los vínculos entre WHMCS y las
+líneas se guardan en la base de datos de WHMCS, así que actualizar los archivos
+nunca los toca.
+
+---
+
+## 5. Tu primer panel
 
 El "panel" es el servidor Xtream AI con el que el módulo va a trabajar.
 
@@ -96,7 +134,7 @@ El "panel" es el servidor Xtream AI con el que el módulo va a trabajar.
 
 ---
 
-## 5. Tu primer producto
+## 6. Tu primer producto
 
 Ahora crea el producto que vas a vender.
 
@@ -139,7 +177,7 @@ Tú no tienes que hacer nada más en ese momento.
 
 ---
 
-## 6. Lo que ve tu cliente
+## 7. Lo que ve tu cliente
 
 Cuando el cliente entra en su área de cliente de WHMCS y abre su servicio, ve una tarjeta con:
 
@@ -156,7 +194,7 @@ Si la línea todavía no está lista, verá el aviso de que debe esperar a que t
 
 ---
 
-## 7. El día a día
+## 8. El día a día
 
 Estas son las acciones que harás como administrador y qué provocan en el panel:
 
@@ -181,7 +219,7 @@ Los cambios de paquete necesitan que tu panel se haya actualizado el **2026-09-1
 
 ---
 
-## 8. Herramientas masivas
+## 9. Herramientas masivas
 
 La pestaña **Bulk tools** (**Addons → Xtream AI Panel → Bulk tools**) hace tres trabajos que, de otra forma, obligarían a editar los servicios uno por uno. Se ejecutan por lotes en tu navegador (100 líneas por petición al indexar, 100 servicios al vincular, 5 al sincronizar, porque cada sync es una llamada al panel) y muestran una barra de progreso, un contador por cada resultado y una fila por servicio. Se pueden volver a ejecutar sin miedo: nunca se duplica nada y nunca se borra nada del panel. Si una ejecución se corta a la mitad (el panel dejó de responder, se cerró la pestaña), vuelve a lanzarla: el índice se reconstruye desde cero y la vinculación no arranca hasta que el índice se haya completado una vez.
 
@@ -189,7 +227,7 @@ Una ejecución que se corta guarda su posición en el navegador, así que se pue
 
 El desplegable **Panel** de arriba decide sobre qué panel trabaja todo lo demás. Si lo cambias, la página se recarga en ese panel.
 
-### 8.1 Index panel lines (indexar las líneas del panel)
+### 9.1 Index panel lines (indexar las líneas del panel)
 
 Lee las líneas que ya existen en el panel y guarda una copia local: id de la línea, usuario, vencimiento, estado y el número de servicio de WHMCS que aparece en las notas de la línea.
 
@@ -199,7 +237,7 @@ Lee las líneas que ya existen en el panel y guarda una copia local: id de la l�
 
 Ejecuta esto antes que las otras dos herramientas. Solo lee del panel, así que no cambia nada allí. Si lo vuelves a ejecutar, el índice de ese panel se reconstruye desde cero.
 
-### 8.2 Link existing services (vincular servicios existentes)
+### 9.2 Link existing services (vincular servicios existentes)
 
 Conecta los servicios de WHMCS que todavía no tienen una línea del panel registrada con las líneas que ya existen. Busca primero el **número de servicio en las notas de la línea** (la plantilla **Line Notes Template** de General Settings, `WHMCS:{service_id}` por defecto) y, si no lo encuentra, por el **usuario**.
 
@@ -221,7 +259,7 @@ Por cada servicio obtienes una fila con el id del servicio, el cliente, el usuar
 
 En el panel no se crea ni se borra nada: esta herramienta solo restaura el vínculo entre WHMCS y la línea.
 
-### 8.3 Sync all services (sincronizar todos los servicios)
+### 9.3 Sync all services (sincronizar todos los servicios)
 
 Ejecuta la misma acción que el botón **Sync line to panel** de cada servicio, pero para todos a la vez: los bouquets, las notas y las conexiones (Max Connections más cualquier opción configurable de conexiones, como `extra_connections`) de cada producto se recalculan y se envían a su línea del panel.
 
@@ -236,7 +274,7 @@ La barra de progreso te dice **cuántas peticiones están en marcha y cuántos s
 
 ---
 
-## 9. Productos Sub-Reseller explicados fácil
+## 10. Productos Sub-Reseller explicados fácil
 
 **Para qué sirven:** un producto Sub-Reseller le da a tu cliente su **propia cuenta de reventa** en el panel, con sus **propios créditos**. Así, tu cliente puede revender líneas por su cuenta.
 
@@ -255,11 +293,11 @@ No hace falta elegir Package ni Bouquets para este tipo: el módulo los ignora y
 
 ---
 
-## 10. Todas las pantallas del addon, una a una
+## 11. Todas las pantallas del addon, una a una
 
 Dentro de **Addons → Xtream AI Panel** tienes estas pestañas:
 
-**Dashboard** — el resumen. Muestra tarjetas con: **Credits** (créditos), **Panels** (cuántos paneles hay y cuántos están bien), **Sub-Resellers** y **Lines**. Debajo, el estado de cada panel y unos accesos rápidos.
+**Dashboard** — el resumen. Muestra tarjetas con: **Credits** (créditos), **Panels** (cuántos paneles hay y cuántos están bien), **Sub-Resellers** y **Lines**. Arriba del todo muestra además la tarjeta de actualización cuando existe una versión nueva del módulo (sección 4). Debajo, el estado de cada panel y unos accesos rápidos.
 
 **Panels** — la lista de tus paneles con su estado, SSL, última comprobación y acciones (Test, Edit, Activate/Deactivate, Delete). Aquí también está el formulario **Add Panel** / **Edit Panel**.
 
@@ -269,7 +307,7 @@ Dentro de **Addons → Xtream AI Panel** tienes estas pestañas:
 
 **Catalog** — para ver qué hay en tu panel: **Live Streams** (canales en directo) y **VOD** (películas y series). Tiene su propio buscador.
 
-**Bulk tools** — las tres operaciones que trabajan sobre muchos servicios a la vez: **Index panel lines**, **Link existing services** y **Sync all services**. Mira la sección 8.
+**Bulk tools** — las tres operaciones que trabajan sobre muchos servicios a la vez: **Index panel lines**, **Link existing services** y **Sync all services**. Mira la sección 9.
 
 **Module Logs** — un historial de lo que ha hecho el módulo (cada llamada a la API del panel), con fecha, acción y un resumen breve.
 
@@ -294,7 +332,7 @@ Cuando termines, pulsa **Save Settings** (Guardar ajustes).
 
 ---
 
-## 11. Problemas comunes
+## 12. Problemas comunes
 
 | Mensaje que puedes ver | Qué significa | Qué hacer |
 |---|---|---|
@@ -310,7 +348,7 @@ Cuando termines, pulsa **Save Settings** (Guardar ajustes).
 
 ---
 
-## 12. Preguntas frecuentes
+## 13. Preguntas frecuentes
 
 **¿Necesito ser administrador del panel?**
 Para productos Line, no. Para productos Sub-Reseller, sí: la key del panel debe ser una admin key. Cambiar el paquete del panel de una línea que ya está funcionando (un upgrade o downgrade de producto en WHMCS) también necesita una admin key; con una key de reseller se termina el servicio y se aprovisiona de nuevo.
@@ -325,7 +363,7 @@ Sí. Añade todos los que quieras en Panels, y en cada producto eliges cuál usa
 Entra en **Addons → Xtream AI Panel → Bulk tools**, elige tu panel en el desplegable, pulsa **Index lines** en la primera tarjeta y, cuando termine, pulsa **Link services** en la segunda. Cada servicio se empareja con su línea por el número de servicio de WHMCS guardado en las notas de la línea (plantilla `WHMCS:{service_id}`) o, si no hay etiqueta, por el usuario: el vínculo se restaura sin crear, cambiar ni borrar nada en el panel. Después puedes pulsar **Sync services** en la tercera tarjeta para que cada línea reciba los bouquets y las conexiones de su producto.
 
 **¿Mis clientes pueden elegir cuántas conexiones quieren?**
-Sí. Añade al producto una Opción Configurable de WHMCS llamada `extra_connections` (una cantidad desde 0, con precio por unidad) y el módulo la suma a las conexiones del paquete, en el pedido y cada vez que el cliente la cambie después. Mira "Dejar que el cliente compre conexiones extra" en la sección 5.
+Sí. Añade al producto una Opción Configurable de WHMCS llamada `extra_connections` (una cantidad desde 0, con precio por unidad) y el módulo la suma a las conexiones del paquete, en el pedido y cada vez que el cliente la cambie después. Mira "Dejar que el cliente compre conexiones extra" en la sección 6.
 
 **¿Funciona con mi versión de PHP?**
 Sí, con **PHP 7.2 o superior**.
@@ -333,9 +371,12 @@ Sí, con **PHP 7.2 o superior**.
 **¿Hay una clave de licencia?**
 No, el módulo es gratuito y de código abierto (MIT).
 
+**¿Cómo actualizo el módulo?**
+Entra en **Addons → Xtream AI Panel → Dashboard**. Cuando haya una versión nueva, la tarjeta de arriba muestra sus notas de la release y un botón **Update now** que la descarga, la verifica y la instala; si tu servidor no lo permite, esa misma tarjeta muestra las instrucciones manuales. Los archivos anteriores se guardan junto al módulo como `xtreamai.bak-<versión>-<fecha>`. Mira la sección 4.
+
 ---
 
-## 13. Desinstalar
+## 14. Desinstalar
 
 1. En **System Settings → Addon Modules**, busca **Xtream AI Panel** y pulsa **Deactivate** (Desactivar). Los datos se **conservan**, por si quieres volver a activarlo después.
 2. Para borrarlo del todo, elimina las dos carpetas por el Administrador de Archivos o FTP:

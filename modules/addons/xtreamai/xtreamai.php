@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.4.2',
+        'version'     => '1.5.0',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -176,6 +176,16 @@ function xtreamai_handle_action($action, $modulelink)
                 $redirect .= '&view=resellers&panel_id=' . (int) ($_POST['panel_id'] ?? 0);
                 $balance = xtreamai_adjust_credits();
                 xtreamai_flash('success', $balance === '' ? 'Credits adjusted.' : 'Credits adjusted. New balance: ' . $balance);
+                break;
+
+            case 'check_update':
+                $redirect .= '&view=dashboard';
+                xtreamai_check_update();
+                break;
+
+            case 'self_update':
+                $redirect .= '&view=dashboard';
+                xtreamai_self_update($modulelink);
                 break;
 
             default:
@@ -356,6 +366,64 @@ function xtreamai_adjust_credits(): string
         $delta,
         $reason
     );
+}
+
+function xtreamai_updater_ready()
+{
+    if (!class_exists('WhmcsXtreamAI\\Updater')) {
+        throw new \RuntimeException('The update helper is not available in this installation.');
+    }
+}
+
+function xtreamai_check_update()
+{
+    xtreamai_updater_ready();
+
+    $release   = \WhmcsXtreamAI\Updater::latestRelease(true);
+    $installed = \WhmcsXtreamAI\Updater::currentVersion();
+    $label     = $installed === '' ? 'unknown' : $installed;
+
+    if ($release === null) {
+        xtreamai_flash('error', 'Could not check for updates. GitHub did not answer and no saved result is available.');
+
+        return;
+    }
+
+    $version = (string) ($release['version'] ?? '');
+
+    if (\WhmcsXtreamAI\Updater::isNewer($version, xtreamai_update_compare_version($installed))) {
+        xtreamai_flash('success', 'Version ' . $version . ' is available. Installed version: ' . $label . '.');
+    } else {
+        xtreamai_flash('success', 'You are running the latest version (' . $label . ').');
+    }
+}
+
+function xtreamai_self_update($modulelink)
+{
+    xtreamai_updater_ready();
+
+    $release = \WhmcsXtreamAI\Updater::latestRelease();
+
+    if ($release === null) {
+        xtreamai_flash('error', 'No release information available. Press Check for updates first.');
+
+        return;
+    }
+
+    $result  = \WhmcsXtreamAI\Updater::apply($release);
+    $message = (string) ($result['message'] ?? 'The update did not finish.');
+
+    if (empty($result['ok'])) {
+        xtreamai_flash('error', $message);
+
+        return;
+    }
+
+    if (!empty($result['backups']) && is_array($result['backups'])) {
+        $message .= ' Backups kept: ' . implode(', ', $result['backups']) . '.';
+    }
+
+    xtreamai_flash('success', $message . ' Dashboard: ' . $modulelink);
 }
 
 function xtreamai_ajax_test_connection()
@@ -1146,6 +1214,9 @@ font-family:var(--xtai-font);font-size:14px;line-height:1.55;color:var(--xtai-te
 .xtai-bulk-counter strong{font-family:var(--xtai-mono);color:var(--xtai-text)}
 .xtai-table-wrap--bulk{max-height:320px;margin-top:14px}
 .xtai-bulk-empty{color:var(--xtai-muted);font-size:13px;text-align:center}
+.xtai-update__notes{white-space:pre-wrap;word-break:break-word;font-family:var(--xtai-mono);font-size:12px;line-height:1.55;color:var(--xtai-text);background:var(--xtai-bg);border:1px solid var(--xtai-border);border-radius:var(--xtai-radius-sm);padding:10px 12px;margin:0 0 16px;max-height:220px;overflow:auto}
+.xtai-update__manual{margin:14px 0 0;padding:12px 14px;border:1px solid var(--xtai-border);border-radius:var(--xtai-radius-sm);background:var(--xtai-bg);font-size:12.5px;color:var(--xtai-muted)}
+.xtai-update__manual code{font-family:var(--xtai-mono);color:var(--xtai-text);word-break:break-all}
 @media (max-width:900px){
 .xtai-wrap{padding:16px}
 .xtai-settings-grid{grid-template-columns:1fr}
@@ -1167,6 +1238,8 @@ font-family:var(--xtai-font);font-size:14px;line-height:1.55;color:var(--xtai-te
 ' . $flashHtml;
 
     if ($view === 'dashboard') {
+        echo xtreamai_update_panel($modulelink, $token, $h);
+
         $activePanels = [];
         if (class_exists('WhmcsXtreamAI\\PanelStore')) {
             try {
@@ -2932,6 +3005,113 @@ function xtreamai_catalog_icon(string $icon, callable $h): string
     }
 
     return '<img class="xtai-thumb" src="' . $h($icon) . '" alt="" loading="lazy" onerror="this.style.display=\'none\'">';
+}
+
+function xtreamai_update_compare_version($current): string
+{
+    $current = trim((string) $current);
+
+    return $current === '' ? '0.0.0' : $current;
+}
+
+function xtreamai_update_panel($modulelink, $token, callable $h): string
+{
+    if (!class_exists('WhmcsXtreamAI\\Updater')) {
+        return '';
+    }
+
+    try {
+        $release     = \WhmcsXtreamAI\Updater::latestRelease();
+        $installed   = \WhmcsXtreamAI\Updater::currentVersion();
+        $environment = \WhmcsXtreamAI\Updater::environment();
+    } catch (\Throwable $e) {
+        return '';
+    }
+
+    $label   = $installed === '' ? 'unknown' : $installed;
+    $postTo  = $h($modulelink);
+    $check   = '<form method="post" action="' . $postTo . '" class="xtai-inline-form">'
+        . $token
+        . '<input type="hidden" name="action" value="check_update">'
+        . '<button type="submit" class="xtai-btn xtai-btn--sm">Check for updates</button>'
+        . '</form>';
+
+    if ($release === null) {
+        return '<section class="xtai-card">'
+            . '<div class="xtai-card-head"><div><h2>Module updates</h2>'
+            . '<p class="xtai-sub">Installed version ' . $h($label) . '.</p></div>'
+            . '<span class="xtai-badge xtai-badge--neutral">Not checked</span></div>'
+            . '<p class="xtai-help">The last check did not return release information. Confirm that this server can reach api.github.com over HTTPS.</p>'
+            . '<div class="xtai-actions">' . $check . '</div>'
+            . '</section>';
+    }
+
+    $version = (string) ($release['version'] ?? '');
+
+    if (!\WhmcsXtreamAI\Updater::isNewer($version, xtreamai_update_compare_version($installed))) {
+        return '<section class="xtai-card">'
+            . '<div class="xtai-card-head"><div><h2>Module updates</h2>'
+            . '<p class="xtai-sub">Installed version ' . $h($label) . ' · latest release ' . $h($version) . '.</p></div>'
+            . '<span class="xtai-badge xtai-badge--success">Up to date</span></div>'
+            . '<div class="xtai-actions">' . $check . '</div>'
+            . '</section>';
+    }
+
+    $notes      = trim((string) ($release['notes'] ?? ''));
+    $releaseUrl = trim((string) ($release['release_url'] ?? ''));
+    $name       = trim((string) ($release['name'] ?? ''));
+    $published  = trim((string) ($release['published_at'] ?? ''));
+
+    if (xtreamai_strlen($notes) > 600) {
+        $notes = rtrim(xtreamai_substr($notes, 0, 600)) . '…';
+    }
+
+    $meta = 'Installed version ' . $label;
+
+    if ($name !== '') {
+        $meta .= ' · ' . $name;
+    }
+
+    if ($published !== '') {
+        $meta .= ' · published ' . $published;
+    }
+
+    $html = '<section class="xtai-card">'
+        . '<div class="xtai-card-head"><div><h2>Version ' . $h($version) . ' available</h2>'
+        . '<p class="xtai-sub">' . $h($meta) . '</p></div>'
+        . '<span class="xtai-badge xtai-badge--warning">Update available</span></div>';
+
+    if ($notes !== '') {
+        $html .= '<pre class="xtai-update__notes">' . $h($notes) . '</pre>';
+    }
+
+    $html .= '<div class="xtai-actions">';
+
+    if ($releaseUrl !== '') {
+        $html .= '<a class="xtai-btn" href="' . $h($releaseUrl) . '" target="_blank" rel="noopener noreferrer">Release notes</a>';
+    }
+
+    if (!empty($environment['ok'])) {
+        $html .= '<form method="post" action="' . $postTo . '" class="xtai-inline-form">'
+            . $token
+            . '<input type="hidden" name="action" value="self_update">'
+            . '<button type="submit" class="xtai-btn xtai-btn--primary">Update now</button>'
+            . '</form>';
+    }
+
+    $html .= $check . '</div>';
+
+    if (!empty($environment['ok'])) {
+        $html .= '<p class="xtai-help">Update now downloads the release from GitHub, verifies its SHA256 checksum and replaces the two module folders. The previous version is kept as a backup.</p>';
+    } else {
+        $html .= '<div class="xtai-update__manual">'
+            . '<strong>Update by hand:</strong> ' . $h((string) ($environment['message'] ?? ''))
+            . ' Download <code>whmcs-xtreamai-' . $h($version) . '.tar.gz</code> from the release page and replace '
+            . '<code>modules/servers/xtreamai</code> and <code>modules/addons/xtreamai</code> with the two folders it contains.'
+            . '</div>';
+    }
+
+    return $html . '</section>';
 }
 
 function xtreamai_link($base, array $params)

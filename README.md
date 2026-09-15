@@ -51,7 +51,7 @@ account on the panel:
 
 - Panels: add, edit and remove panel connections; connection test for
   saved and unsaved credentials.
-- Dashboard: credits, panel health and counters.
+- Dashboard: credits, panel health, counters and the update banner.
 - Sub-Resellers view (admin key only): list and adjust credits.
 - Lines browser with search and status filter.
 - Read-only Catalog view (streams and VOD).
@@ -171,6 +171,42 @@ Keep the token safe: paste it into the WHMCS addon in the next step.
    ```
 2. In WHMCS admin: **System Settings → Addon Modules** → activate
    **Xtream AI Panel**.
+
+### Updating
+
+The addon checks the GitHub releases of this repository once a day and, when
+a newer version exists, the dashboard shows a **Version X available** banner
+with the release name, an excerpt of the release notes and a link to the
+release page. **Check for updates** next to it forces the check.
+
+**Update now** performs the whole update in place:
+
+- Downloads `whmcs-xtreamai-<version>.tar.gz` and its `.sha256` asset from
+  the release, verifies the SHA256 checksum and aborts without touching
+  anything if it does not match.
+- Extracts the archive, verifies that it contains both module folders and
+  that the `version` in the addon `whmcs.json` matches the release tag, then
+  replaces `modules/servers/xtreamai` and `modules/addons/xtreamai`.
+- Keeps the previous version of each folder next to it as
+  `xtreamai.bak-<version>-<timestamp>` (only the newest backup per folder is
+  kept) and removes its own temporary files. Nothing outside those two
+  folders is ever deleted.
+- Refuses to install the same or an older version.
+
+The button needs `ext-curl` and `ext-phar` (`PharData`), a writable system
+temporary directory, and PHP write access to both module folders and their
+parent directories. When any of them is missing, the banner shows the manual
+instructions instead of the button.
+
+**Manual fallback:** download the tarball from the
+[Releases page](https://github.com/Xtream-AI/whmcs-xtreamai/releases) and
+copy the two folders over the existing ones, as in the install step above.
+Panels, API keys, product settings and the WHMCS-to-line links live in the
+database, so replacing the files keeps everything.
+
+After an update WHMCS keeps serving the files it already loaded for the
+running request: the module says `Updated to X. Reload the page.` and the
+admin reloads the page (there is no automatic reload).
 
 ## Configure
 
@@ -309,6 +345,7 @@ modules/
       ServiceStore.php        mod_xtreamai_services
       PanelApi.php            facade over the panel API
       PanelHttpClient.php     lightweight API client
+      Updater.php             release check and in-app update
       PanelApiRequestException.php
 ```
 

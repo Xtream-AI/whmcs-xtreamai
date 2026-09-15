@@ -7,7 +7,7 @@ namespace WhmcsXtreamAI;
 final class PanelHttpClient
 {
     private const USER_AGENT = 'whmcs-xtreamai';
-    private const VERSION = '1.4.2';
+    private const VERSION = '1.5.0';
 
     
     private $baseUrl;
