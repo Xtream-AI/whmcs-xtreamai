@@ -181,7 +181,7 @@ Los cambios de paquete necesitan que tu panel se haya actualizado el **2026-09-1
 
 ## 8. Herramientas masivas
 
-La pestaña **Bulk tools** (**Addons → Xtream AI Panel → Bulk tools**) hace tres trabajos que, de otra forma, obligarían a editar los servicios uno por uno. Se ejecutan por lotes en tu navegador (100 líneas por petición al indexar, 100 servicios al vincular, 20 al sincronizar) y muestran una barra de progreso, un contador por cada resultado y una fila por servicio. Se pueden volver a ejecutar sin miedo: nunca se duplica nada y nunca se borra nada del panel. Si una ejecución se corta a la mitad (el panel dejó de responder, se cerró la pestaña), vuelve a lanzarla: el índice se reconstruye desde cero y la vinculación no arranca hasta que el índice se haya completado una vez.
+La pestaña **Bulk tools** (**Addons → Xtream AI Panel → Bulk tools**) hace tres trabajos que, de otra forma, obligarían a editar los servicios uno por uno. Se ejecutan por lotes en tu navegador (100 líneas por petición al indexar, 100 servicios al vincular, 5 al sincronizar, porque cada sync es una llamada al panel) y muestran una barra de progreso, un contador por cada resultado y una fila por servicio. Se pueden volver a ejecutar sin miedo: nunca se duplica nada y nunca se borra nada del panel. Si una ejecución se corta a la mitad (el panel dejó de responder, se cerró la pestaña), vuelve a lanzarla: el índice se reconstruye desde cero y la vinculación no arranca hasta que el índice se haya completado una vez.
 
 El desplegable **Panel** de arriba decide sobre qué panel trabaja todo lo demás. Si lo cambias, la página se recarga en ese panel.
 

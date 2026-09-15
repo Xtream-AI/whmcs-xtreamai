@@ -181,7 +181,7 @@ Package changes need your panel to have been updated on or after **2026-09-14**.
 
 ## 8. Bulk tools
 
-The **Bulk tools** tab (**Addons → Xtream AI Panel → Bulk tools**) does three jobs that would otherwise mean editing services one by one. They run in batches in your browser (100 lines per request when indexing, 100 services when linking, 20 when syncing) and show a progress bar, a counter for each result and one row per service. They are safe to run again: nothing is ever duplicated and nothing is deleted from the panel. If a run stops halfway (the panel went away, the browser tab was closed), just run it again: indexing starts over from scratch, and linking refuses to run until the index has been completed once.
+The **Bulk tools** tab (**Addons → Xtream AI Panel → Bulk tools**) does three jobs that would otherwise mean editing services one by one. They run in batches in your browser (100 lines per request when indexing, 100 services when linking, 5 when syncing, because each sync is one call to the panel) and show a progress bar, a counter for each result and one row per service. They are safe to run again: nothing is ever duplicated and nothing is deleted from the panel. If a run stops halfway (the panel went away, the browser tab was closed), just run it again: indexing starts over from scratch, and linking refuses to run until the index has been completed once.
 
 The **Panel** dropdown at the top decides which panel everything below works on. Change it and the page reloads on that panel.
 

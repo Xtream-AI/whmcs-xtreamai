@@ -63,7 +63,7 @@ account on the panel:
 
 The addon has a **Bulk tools** view for operations that touch many
 services at once. It runs from the browser in batches (100 services for
-linking, 20 for syncing), shows a progress bar, a counter per outcome
+linking, 5 for syncing), shows a progress bar, a counter per outcome
 and a result row per service (service id, client, username, outcome and
 message). Every operation is idempotent: running it again never
 duplicates rows and never breaks a link that already exists.

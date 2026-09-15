@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.3.0',
+        'version'     => '1.3.1',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -673,7 +673,7 @@ function xtreamai_ajax_bulk_sync()
 
     try {
         $adminUsername = xtreamai_bulk_admin_username();
-        $batchSize     = 20;
+        $batchSize     = 5;
         $statuses      = $includeAll ? ['Active', 'Suspended'] : ['Active'];
 
         $rows = \WHMCS\Database\Capsule::table('mod_xtreamai_services')
@@ -1787,6 +1787,7 @@ JS;
         synced: 'Synced'
     };
     var running = false;
+    var resumeFrom = {};
 
     function byId(id) {
         return document.getElementById(id);
@@ -1891,14 +1892,16 @@ JS;
         var counts = {};
         var batches = 0;
         var processedTotal = 0;
-        var marker = (op === 'index') ? '' : '0';
+        var resuming = (op !== 'index' && resumeFrom[op]) ? String(resumeFrom[op]) : '';
+        var marker = (op === 'index') ? '' : (resuming !== '' ? resuming : '0');
         var previous = null;
+        var retries = 0;
 
         running = true;
         setBusy(true);
         resetTable(op);
         renderCounters(op, counts);
-        setBar(op, 'running', 'Starting...');
+        setBar(op, 'running', resuming !== '' ? 'Resuming after service #' + resuming + '...' : 'Starting...');
 
         function finish() {
             running = false;
@@ -1906,7 +1909,12 @@ JS;
         }
 
         function fail(message) {
-            setBar(op, 'error', message || 'The operation failed.');
+            var text = message || 'The operation failed.';
+            if (op !== 'index' && marker !== '0') {
+                resumeFrom[op] = marker;
+                text += ' Stopped after service #' + marker + '. Click the button again to resume from there.';
+            }
+            setBar(op, 'error', text);
             finish();
         }
 
@@ -1925,6 +1933,7 @@ JS;
                         return;
                     }
                     batches++;
+                    retries = 0;
 
                     if (op === 'index') {
                         var indexed = parseInt(data.indexed, 10);
@@ -1961,6 +1970,7 @@ JS;
                     }
                     renderCounters(op, counts);
                     if (data.done) {
+                        delete resumeFrom[op];
                         setBar(op, 'done', 'Done. ' + processedTotal + ' services processed in ' + batches + ' batches.');
                         finish();
                         return;
@@ -1976,7 +1986,13 @@ JS;
                     step();
                 })
                 .catch(function () {
-                    fail('The request failed. Check the connection and try again.');
+                    if (retries < 2) {
+                        retries++;
+                        setBar(op, 'running', 'The request failed, retrying in 10 seconds (attempt ' + (retries + 1) + ' of 3)...');
+                        setTimeout(step, 10000);
+                        return;
+                    }
+                    fail('The request failed three times. Check the connection.');
                 });
         }
 
