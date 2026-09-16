@@ -14,6 +14,7 @@ final class Updater
     private const DOWNLOAD_TIMEOUT = 60;
     private const ARCHIVE_ROOT = 'whmcs-xtreamai';
     private const BACKUP_PREFIX = 'xtreamai.bak-';
+    private const STAGING_PREFIX = 'xtreamai.new-';
     private const DIR_NAME = 'xtreamai';
 
     public static $fetch = null;
@@ -247,13 +248,39 @@ final class Updater
                 'label' => 'server module',
                 'target' => $paths['server'],
                 'source' => $sourceServer,
+                'staged' => dirname($paths['server']) . '/' . self::STAGING_PREFIX . $version . '-' . $timestamp,
             ],
             [
                 'label' => 'addon',
                 'target' => $paths['addon'],
                 'source' => $sourceAddon,
+                'staged' => dirname($paths['addon']) . '/' . self::STAGING_PREFIX . $version . '-' . $timestamp,
             ],
         ];
+
+        $prunedStaging = [];
+
+        foreach ($swaps as $swap) {
+            $prunedStaging = array_merge($prunedStaging, self::pruneStaging(dirname($swap['staged'])));
+        }
+
+        if ($prunedStaging !== []) {
+            $steps[] = 'Removed staging folders left behind by an interrupted run: ' . implode(', ', $prunedStaging) . '.';
+        }
+
+        foreach ($swaps as $swap) {
+            if (!self::copyTree($swap['source'], $swap['staged'])) {
+                self::removeStaging($swaps);
+                self::removeTree($temp);
+
+                return self::failure(
+                    'Could not stage the new ' . $swap['label'] . ' next to the current one. Nothing was changed.',
+                    $steps
+                );
+            }
+        }
+
+        $steps[] = 'The new files were staged next to the current folders.';
 
         $done = [];
         $backups = [];
@@ -262,7 +289,8 @@ final class Updater
             $target = self::safeTarget($swap['target'], $paths['modules']);
 
             if ($target === null) {
-                $restored = self::rollback($done, $temp);
+                $restored = self::rollback($done);
+                self::removeStaging($swaps);
                 self::removeTree($temp);
 
                 return self::failure(
@@ -275,7 +303,8 @@ final class Updater
             $backup = dirname($target) . '/' . self::BACKUP_PREFIX . $version . '-' . $timestamp;
 
             if (!self::move($target, $backup)) {
-                $restored = self::rollback($done, $temp);
+                $restored = self::rollback($done);
+                self::removeStaging($swaps);
                 self::removeTree($temp);
 
                 return self::failure(
@@ -284,9 +313,10 @@ final class Updater
                 );
             }
 
-            if (!self::move($swap['source'], $target)) {
+            if (!self::move($swap['staged'], $target)) {
                 $restoredCurrent = self::move($backup, $target);
-                $restored = self::rollback($done, $temp);
+                $restored = self::rollback($done);
+                self::removeStaging($swaps);
                 self::removeTree($temp);
 
                 return self::failure(
@@ -604,20 +634,25 @@ final class Updater
         return @rename($from, $to);
     }
 
-    private static function rollback(array $done, string $temp): array
+    private static function rollback(array $done): array
     {
         $restored = [];
 
         foreach (array_reverse($done) as $index => $item) {
-            $hold = $temp . '/rollback-' . $index . '-' . basename($item['target']);
+            $hold = dirname($item['target']) . '/' . self::STAGING_PREFIX . 'rollback-' . $index . '-' . date('YmdHis');
 
             if (!self::move($item['target'], $hold)) {
                 continue;
             }
 
-            if (self::move($item['backup'], $item['target'])) {
-                $restored[] = $item['label'];
+            if (!self::move($item['backup'], $item['target'])) {
+                self::move($hold, $item['target']);
+
+                continue;
             }
+
+            $restored[] = $item['label'];
+            self::removeTree($hold);
         }
 
         return $restored;
@@ -691,6 +726,91 @@ final class Updater
         }
 
         return $removed;
+    }
+
+    private static function copyTree(string $from, string $to): bool
+    {
+        if (is_link($from) || !is_dir($from)) {
+            return false;
+        }
+
+        if (!is_dir($to) && !@mkdir($to, 0755, true) && !is_dir($to)) {
+            return false;
+        }
+
+        $entries = @scandir($from);
+
+        if (!is_array($entries)) {
+            return false;
+        }
+
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $source = $from . '/' . $entry;
+            $destination = $to . '/' . $entry;
+
+            if (is_link($source)) {
+                continue;
+            }
+
+            if (is_dir($source)) {
+                if (!self::copyTree($source, $destination)) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!is_file($source) || !@copy($source, $destination)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static function pruneStaging(string $parent): array
+    {
+        $removed = [];
+        $entries = @scandir($parent);
+        $parentReal = realpath($parent);
+
+        if (!is_array($entries) || $parentReal === false) {
+            return $removed;
+        }
+
+        foreach ($entries as $entry) {
+            if (strpos($entry, self::STAGING_PREFIX) !== 0) {
+                continue;
+            }
+
+            $path = $parent . '/' . $entry;
+
+            if (is_link($path) || !is_dir($path)) {
+                continue;
+            }
+
+            $real = realpath($path);
+
+            if ($real === false || dirname($real) !== $parentReal) {
+                continue;
+            }
+
+            self::removeTree($real);
+            $removed[] = $real;
+        }
+
+        return $removed;
+    }
+
+    private static function removeStaging(array $swaps): void
+    {
+        foreach ($swaps as $swap) {
+            self::removeTree($swap['staged']);
+        }
     }
 
     private static function removeTree(string $path): void

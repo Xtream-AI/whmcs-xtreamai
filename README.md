@@ -192,7 +192,9 @@ release page. **Check for updates** next to it forces the check.
   anything if it does not match.
 - Extracts the archive, verifies that it contains both module folders and
   that the `version` in the addon `whmcs.json` matches the release tag, then
-  replaces `modules/servers/xtreamai` and `modules/addons/xtreamai`.
+  copies the new files into `xtreamai.new-<version>-<timestamp>` folders next
+  to the current ones and replaces `modules/servers/xtreamai` and
+  `modules/addons/xtreamai` from there.
 - Keeps the previous version of each folder next to it as
   `xtreamai.bak-<version>-<timestamp>` (only the newest backup per folder is
   kept) and removes its own temporary files. Nothing outside those two
@@ -202,7 +204,9 @@ release page. **Check for updates** next to it forces the check.
 The button needs `ext-curl` and `ext-phar` (`PharData`), a writable system
 temporary directory, and PHP write access to both module folders and their
 parent directories. When any of them is missing, the banner shows the manual
-instructions instead of the button.
+instructions instead of the button. The temporary directory does not have to
+sit on the same filesystem as the WHMCS installation, because the new files
+are staged next to the module folders before the swap.
 
 **Manual fallback:** download the tarball from the
 [Releases page](https://github.com/Xtream-AI/whmcs-xtreamai/releases) and
