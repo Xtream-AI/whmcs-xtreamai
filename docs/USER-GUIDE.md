@@ -149,7 +149,8 @@ Now create the product you want to sell.
 | **Bouquets** | The channels/content packages the line will have. | Tick them with the checkboxes. |
 | **Account Type** | What kind of access is created. | `Line (default)` for a normal IPTV line, or `Sub-Reseller` for a reseller account. |
 | **Credits** | Starting credits. **Only** used for `Sub-Reseller`. | For example `100`. For `Line`, leave it at `0`. |
-| **Max Connections** | Maximum concurrent connections per line. Only takes effect when the panel uses an **Admin** key; **Reseller** keys ignore this. | Leave `0` to use the package's own count (`0` never means unlimited). Any value between `1` and `100` to override. The number is absolute and means the same everywhere: when the line is created, when you press Sync, and on a product change. To let the customer choose, see "Letting customers buy extra connections" right below. |
+| **Max Connections** | Maximum concurrent connections per line. Only takes effect when the panel uses an **Admin** key; **Reseller** keys ignore this. | Leave `0` to use the package's own count (`0` never means unlimited). Any value between `1` and `100` to override. The number is absolute and means the same everywhere: when the line is created, on every renewal, when you press Sync, and on a product change. To let the customer choose, see "Letting customers buy extra connections" right below. |
+| **Suspend action** | What happens on the panel when the service is suspended in WHMCS, for example because an invoice was not paid. Only used by `Line` products (`Sub-Reseller` products ignore it). | `Disable the line on the panel` (default): the line is turned off while the service is suspended and turned back on when you unsuspend it. `Leave the line untouched, let it expire`: the panel is never touched, so the line keeps working until its own expiry date and then expires by itself. See "What happens when a service is suspended" in section 8. |
 
 ### Letting customers buy extra connections
 
@@ -160,7 +161,7 @@ You do not need one product per connection count. Add a WHMCS **Configurable Opt
 | `extra_connections` (or `Extra Connections`, `additional_connections`) | Added on top of the base count. The base is the product's **Max Connections** if it is not `0`, otherwise the connection count of the panel package. | A **Quantity** option from `0` to `4` with a price per unit. On a 1-connection package the customer gets 1 to 5 connections, and `0` costs nothing extra. |
 | `max_connections` (or `Connections`) | Replaces the base count outright. `0` falls back to Max Connections, then to the package. | A **Dropdown** with `1`, `2`, `3`... |
 
-The result is sent when the line is created, when you press **Sync line to panel**, and whenever the customer changes the option later through **Upgrade/Downgrade Options** (WHMCS runs the module's package change after the upgrade invoice is paid). Moving the slider back to `0` returns the line to the package count. Like Max Connections, this needs an **Admin** key on the panel; with a Reseller key the panel decides the connection count.
+The result is sent when the line is created, on every renewal, when you press **Sync line to panel**, and whenever the customer changes the option later through **Upgrade/Downgrade Options** (WHMCS runs the module's package change after the upgrade invoice is paid). Moving the slider back to `0` returns the line to the package count. Like Max Connections, this needs an **Admin** key on the panel; with a Reseller key the panel decides the connection count.
 | **Sub-Reseller Member Group ID** | Numeric id of the panel member group new Sub-Reseller accounts will belong to. Only used when **Account Type** is `Sub-Reseller` and the panel key is **Admin**; reseller keys inherit the group from their sub-reseller setup. | For example `4`. |
 
 **What happens when WHMCS creates the service:**
@@ -198,9 +199,9 @@ These are the actions you will take as an administrator and what they do in the 
 
 | Action | Where you click in WHMCS | What happens in the panel |
 |---|---|---|
-| **Suspend** | On the customer's service, the suspend button. | For a **line**, the line is disabled and the customer can no longer watch. For a **sub-reseller**, the panel API does not expose a reseller status field, so the module surfaces a clear error and keeps the WHMCS to panel link intact so you can disable the account in the panel yourself. |
-| **Unsuspend** | On the customer's service, the unsuspend button. | For a **line**, the line is enabled again. For a **sub-reseller**, the module surfaces the same clear error for the same reason and preserves the WHMCS to panel link so you can re-enable the account in the panel yourself. |
-| **Renew** | When the invoice / service is renewed. | The line is renewed and its expiry date is updated. |
+| **Suspend** | On the customer's service, the suspend button. | For a **line**, the line is disabled and the customer can no longer watch, unless the product's **Suspend action** is `Leave the line untouched, let it expire`, in which case the panel is not called at all (see below). For a **sub-reseller**, the panel API does not expose a reseller status field, so the module surfaces a clear error and keeps the WHMCS to panel link intact so you can disable the account in the panel yourself. |
+| **Unsuspend** | On the customer's service, the unsuspend button. | For a **line**, the line is enabled again, unless the product's **Suspend action** is `Leave the line untouched, let it expire`, in which case the panel is not called (if you disabled the line by hand in the panel, it stays disabled). For a **sub-reseller**, the module surfaces the same clear error for the same reason and preserves the WHMCS to panel link so you can re-enable the account in the panel yourself. |
+| **Renew** | When the invoice / service is renewed. | The line is renewed and its expiry date is updated. The panel applies the package again on every renewal, so right after the renew the module pushes the connection count of the product again (Max Connections plus any connections configurable option) instead of leaving the package's own count on the line. If that extra step fails, the renewal is still reported as successful and the detail is written to Module Logs: the line is already renewed on the panel and repeating the renewal would charge it twice. |
 | **Terminate** | On the customer's service, the terminate/cancel button. | For a **line**, the line is deleted from the panel. For a **sub-reseller**, the module surfaces a clear error because the panel API cannot disable the reseller and it preserves the WHMCS to panel link so you can disable the account in the panel yourself without losing state. |
 | **Change password** | On the customer's service, the change password option. | The password is changed in the panel and updated for the customer. |
 | **Sync line to panel** | On the customer's service (admin area), the **Sync line to panel** button. | The current product's bouquets, notes and connection count (Max Connections plus any connections configurable option) are pushed to the line in the panel. Use this after you edit the product's config options without changing the product. |
@@ -214,6 +215,15 @@ These are the actions you will take as an administrator and what they do in the 
 **The bouquets of the new product have to belong to the new package.** If one of them does not, the panel refuses the change and tells you which ids are wrong: nothing is applied to the line and the service stays on its previous panel package. Fix the product's Bouquets field and try again, or leave it empty so the line gets every bouquet of the new package.
 
 Package changes need your panel to have been updated on or after **2026-09-14**. On an older panel the change is **not** applied: the line keeps its original package, only the bouquets, notes and connections are pushed, and WHMCS still reports success and records the new product.
+
+### What happens when a service is suspended
+
+The **Suspend action** option of the product decides it, and it is the option you want to look at when a customer asks you not to cut the line for an unpaid invoice:
+
+- **Disable the line on the panel**: the default. Suspending the service disables the line in the panel, so the customer stops watching right away, and unsuspending it enables the line again. This is what the module has always done.
+- **Leave the line untouched, let it expire**: suspending the service changes nothing in the panel: the line keeps watching until its own expiry date and then expires by itself, with no action from you. Unsuspending the service does not touch the panel either, so a line you disabled by hand in the panel stays disabled.
+
+In both cases WHMCS still marks the service as suspended or active (invoices, automation and the client area work as usual); the difference is only on the panel. The option is per product and only affects **Line** products: Sub-Reseller products always keep trying to change the reseller status on the panel.
 
 ---
 
@@ -362,6 +372,9 @@ Go to **Addons → Xtream AI Panel → Bulk tools**, choose your panel in the dr
 
 **Can my customers choose how many connections they want?**
 Yes. Add a WHMCS Configurable Option named `extra_connections` (a quantity from 0 upwards, priced per unit) to the product and the module adds it on top of the package's connections, on order and every time the customer changes it later. See "Letting customers buy extra connections" in section 6.
+
+**Can a line keep working when the service is suspended for an unpaid invoice?**
+Yes. In the product's Module Settings, set **Suspend action** to `Leave the line untouched, let it expire`. Suspending the service then does nothing to the panel: the line keeps working until its own expiry date and expires by itself. This is a per-product setting, so you can keep the default (`Disable the line on the panel`) everywhere else. See section 8.
 
 **Does it work with my PHP version?**
 Yes, with **PHP 7.2 or higher**.

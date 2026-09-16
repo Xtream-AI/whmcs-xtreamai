@@ -291,7 +291,10 @@ final class PanelApi
                 $body
             );
 
-            return ['expires_at' => self::expiryFrom($line)];
+            return [
+                'expires_at' => self::expiryFrom($line),
+                'max_connections' => (int) self::value($line, 'max_connections', 0),
+            ];
         });
     }
 

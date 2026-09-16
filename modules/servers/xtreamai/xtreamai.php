@@ -172,6 +172,13 @@ function xtreamai_ConfigOptions()
             'Default' => '0',
             'Description' => 'Numeric id of the panel member group this Sub-Reseller product creates accounts in. Only used when the panel Key type is Admin (reseller keys inherit the group from their sub-reseller setup).',
         ],
+        'suspend_action' => [
+            'FriendlyName' => 'Suspend action',
+            'Type' => 'dropdown',
+            'Options' => ['disable' => 'Disable the line on the panel', 'none' => 'Leave the line untouched, let it expire'],
+            'Default' => 'disable',
+            'Description' => 'What WHMCS does on the panel when this service is suspended, for example by an unpaid invoice. Disable the line on the panel (default) turns the line off so the customer cannot watch at once, and unsuspending turns it back on. Leave the line untouched does nothing to the panel: the line keeps working until its own expiry date, and unsuspending leaves it as it is. Line products only; Sub-Reseller products are not affected by this option.',
+        ],
     ];
 }
 
@@ -633,6 +640,15 @@ function xtreamai_subResellerMemberGroupId(array $params): int
     return $value > 0 ? $value : 0;
 }
 
+function xtreamai_suspendAction(array $params): string
+{
+    $raw = $params['configoption9'] ?? ($params['configoptions']['suspend_action'] ?? '');
+    if (is_array($raw)) {
+        $raw = reset($raw);
+    }
+    return strtolower(trim((string) $raw)) === 'none' ? 'none' : 'disable';
+}
+
 function xtreamai_clamp(int $value, int $min, int $max): int
 {
     if ($value < $min) {
@@ -1010,6 +1026,10 @@ function xtreamai_createResellerAccount(array $params): string
 function xtreamai_SuspendAccount(array $params)
 {
     return xtreamai_execute($params, 'suspend', static function (array $params): string {
+        if (xtreamai_accountType($params) !== 'reseller' && xtreamai_suspendAction($params) === 'none') {
+            \WhmcsXtreamAI\ServiceStore::updateStatus((int) ($params['serviceid'] ?? 0), 'Suspended');
+            return 'success';
+        }
         $panelId = xtreamai_requirePanelId($params);
         $lineId = xtreamai_lineIdForService($params);
         if (xtreamai_accountType($params) === 'reseller') {
@@ -1025,6 +1045,10 @@ function xtreamai_SuspendAccount(array $params)
 function xtreamai_UnsuspendAccount(array $params)
 {
     return xtreamai_execute($params, 'unsuspend', static function (array $params): string {
+        if (xtreamai_accountType($params) !== 'reseller' && xtreamai_suspendAction($params) === 'none') {
+            \WhmcsXtreamAI\ServiceStore::updateStatus((int) ($params['serviceid'] ?? 0), 'Active');
+            return 'success';
+        }
         $panelId = xtreamai_requirePanelId($params);
         $lineId = xtreamai_lineIdForService($params);
         if (xtreamai_accountType($params) === 'reseller') {
@@ -1078,6 +1102,23 @@ function xtreamai_Renew(array $params)
             throw new \RuntimeException('No package selected for renewal.');
         }
         $result = \WhmcsXtreamAI\PanelApi::renewLine($panelId, $lineId, $packageId);
+
+        try {
+            $maxConn = \WhmcsXtreamAI\PanelApi::keyType($panelId) === 'admin'
+                ? xtreamai_maxConnectionsForService($params, $panelId, $packageId)
+                : 0;
+            if ($maxConn > 0 && $maxConn !== (int) ($result['max_connections'] ?? 0)) {
+                \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, ['max_connections' => $maxConn]);
+            }
+        } catch (\Throwable $e) {
+            xtreamai_logModuleCall(
+                'renew_connections',
+                xtreamai_logRequestSummary('renew_connections', $params),
+                $e->getMessage(),
+                'error'
+            );
+        }
+
         \WhmcsXtreamAI\ServiceStore::updateStatus(
             (int) ($params['serviceid'] ?? 0),
             'Active',

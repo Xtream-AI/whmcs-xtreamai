@@ -23,7 +23,13 @@ the lifecycle:
   credits; a reseller key is refused with a clear error and the service
   has to be terminated and re-provisioned.
 - Next-due-date sync on create and renew (skipped for one-time and free
-  billing cycles).
+  billing cycles). Renew also re-applies the line's connection count
+  (Max Connections plus any connections configurable option) when the
+  panel's renew left the line on the package's own count, so a renewal
+  never downgrades a customer to the package value.
+- Per-product **Suspend action**: whether a WHMCS suspension disables the
+  line on the panel (default) or leaves it untouched so it simply
+  expires on its own date.
 - Client-area card with credentials, M3U URL, EPG URL and active
   connections. Both URLs accept `{username}` and `{password}`
   placeholders, replaced per client (URL-encoded).
@@ -229,7 +235,8 @@ admin reloads the page (there is no automatic reload).
    Account Type, Credits (for Sub-Reseller products), Max Connections
    (optional, admin key only), Sub-Reseller Member Group ID (required
    for Sub-Reseller products on Admin keys; numeric id of the panel
-   member group new Sub-Reseller accounts will belong to).
+   member group new Sub-Reseller accounts will belong to) and Suspend
+   action (see "Suspending without touching the panel" below).
 5. Save the product.
 
 The **Max Connections** field caps the number of concurrent connections
@@ -255,10 +262,44 @@ reads it by name, case-insensitive, ignoring the `|Display name` part:
   A dropdown of `1`, `2`, `3` gives exactly that many connections. A
   value of `0` falls back to Max Connections, then to the package.
 
-The resulting number is sent on creation, on **Sync line to panel** and
-on every product or configurable-option change, so a customer moving
-the slider from 2 back to 0 gets the package count back. Both option
-kinds need an **Admin** key on the panel entry.
+The resulting number is sent on creation, on renew, on **Sync line to
+panel** and on every product or configurable-option change, so a
+customer moving the slider from 2 back to 0 gets the package count
+back. Both option kinds need an **Admin** key on the panel entry.
+
+The panel's renew endpoint applies the package template to the line, so
+it writes the package's own connection count and clears the trial flag.
+Right after a successful renew the module resolves the connection count
+of the product again and pushes it to the line when it differs from the
+number the renew returned. The renew call itself reports the expiry date
+only, so in practice the count is pushed on every renewal of a product
+that resolves to a number above zero. That extra write is best effort:
+if it fails, the renewal still reports success and the error is kept in
+the module log, because the panel has already renewed the line and WHMCS
+must not retry the whole renewal (it would charge the panel twice).
+Products without a connection count of their own (`Max Connections` at
+`0` and no connections configurable option) send nothing, so the package
+value is what stays on the line.
+
+**Suspending without touching the panel.** The **Suspend action** config
+option decides what a WHMCS suspension does to a line product:
+
+- **Disable the line on the panel** (default, and the behaviour of every
+  older release): the line is disabled on suspend and enabled again on
+  unsuspend. The customer stops watching immediately.
+- **Leave the line untouched, let it expire:** the module never changes
+  the line when the service is suspended or unsuspended. The line keeps
+  working until its own panel expiry date and then expires on its own,
+  which is what some resellers want for overdue invoices (no angry
+  customer cut off mid-month, no manual re-enable afterwards). If you
+  disabled a line yourself from the panel, unsuspending the service does
+  not enable it again.
+
+The option applies to **Line** products only and it is read per service,
+so you can configure it product by product. Sub-Reseller products ignore
+it and keep trying to change the reseller status on the panel. WHMCS's
+service status is updated in both cases, so invoices, automation and the
+client area behave as usual.
 
 ## Provisioning modes
 
@@ -266,8 +307,10 @@ Set the mode per product with the **Account Type** config option:
 
 - **Line** (default): each service becomes one IPTV line on the panel.
   Package and bouquets come from the panel; Suspend/Unsuspend toggle the
-  line status; Renew moves the panel expiry and syncs WHMCS's next due
-  date; Terminate deletes the line on the panel.
+  line status unless the product's **Suspend action** says to leave the
+  line untouched; Renew moves the panel expiry, re-applies the product's
+  connection count when the panel reset it to the package value, and
+  syncs WHMCS's next due date; Terminate deletes the line on the panel.
 - **Sub-Reseller:** each service becomes a sub-reseller account on the
   panel. The `credits` config option seeds the initial balance and is
   added again on each renewal. ChangePassword resets the reseller
@@ -347,7 +390,21 @@ modules/
       PanelHttpClient.php     lightweight API client
       Updater.php             release check and in-app update
       PanelApiRequestException.php
+tests/
+  run.php                     server module tests, no WHMCS required
 ```
+
+Run the tests with any PHP 7.2+ binary, from the repository root:
+
+```bash
+php tests/run.php
+```
+
+The runner declares the few WHMCS helpers the server module uses
+(`Capsule`, `logModuleCall`, `encrypt`) and its own `PanelApi`,
+`ServiceStore`, `Settings` and `PanelStore` doubles, so no WHMCS
+installation, database or panel is needed. It exits with a non-zero
+status when a check fails.
 
 User documentation (non-technical):
 [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) ·

@@ -151,7 +151,8 @@ Ahora crea el producto que vas a vender.
 | **Bouquets** | Los canales/paquetes de contenido que tendrá la línea. | Márcalos con las casillas. |
 | **Account Type** | Qué tipo de acceso se crea. | `Line (default)` para una línea IPTV normal, o `Sub-Reseller` para una cuenta de reventa. |
 | **Credits** | Créditos iniciales. **Solo** se usa en `Sub-Reseller`. | Por ejemplo `100`. En `Line` déjalo en `0`. |
-| **Max Connections** | Máximo de conexiones concurrentes por línea. Solo tiene efecto cuando el panel usa una clave de tipo **Admin**; las claves de **Reseller** lo ignoran. | Deja `0` para usar el valor del paquete (`0` nunca significa ilimitado). Cualquier valor entre `1` y `100` para sobreescribir. El número es absoluto y significa lo mismo en todos lados: al crear la línea, al pulsar Sync y en un cambio de producto. Para que el cliente elija, mira "Dejar que el cliente compre conexiones extra" justo debajo. |
+| **Max Connections** | Máximo de conexiones concurrentes por línea. Solo tiene efecto cuando el panel usa una clave de tipo **Admin**; las claves de **Reseller** lo ignoran. | Deja `0` para usar el valor del paquete (`0` nunca significa ilimitado). Cualquier valor entre `1` y `100` para sobreescribir. El número es absoluto y significa lo mismo en todos lados: al crear la línea, en cada renovación, al pulsar Sync y en un cambio de producto. Para que el cliente elija, mira "Dejar que el cliente compre conexiones extra" justo debajo. |
+| **Suspend action** | Qué pasa en el panel cuando el servicio se suspende en WHMCS, por ejemplo porque no se pagó una factura. Solo lo usan los productos de tipo `Line` (los `Sub-Reseller` lo ignoran). | `Disable the line on the panel` (por defecto): la línea se desactiva mientras el servicio está suspendido y se vuelve a activar al reactivarlo. `Leave the line untouched, let it expire`: el panel no se toca, así que la línea sigue funcionando hasta su propia fecha de vencimiento y después vence sola. Mira "Qué pasa cuando se suspende un servicio" en la sección 8. |
 
 ### Dejar que el cliente compre conexiones extra
 
@@ -162,7 +163,7 @@ No necesitas un producto por cada cantidad de conexiones. Añade una **Opción C
 | `extra_connections` (o `Extra Connections`, `additional_connections`) | Se suma a la base. La base es el **Max Connections** del producto si no es `0`; si es `0`, las conexiones del paquete del panel. | Una opción de tipo **Quantity** de `0` a `4` con precio por unidad. Con un paquete de 1 conexión el cliente obtiene de 1 a 5 conexiones, y `0` no cuesta nada extra. |
 | `max_connections` (o `Connections`) | Reemplaza la base por completo. Con `0` se usa Max Connections y, si es `0`, el paquete. | Un **Dropdown** con `1`, `2`, `3`... |
 
-El resultado se envía al crear la línea, al pulsar **Sync line to panel** y cada vez que el cliente cambia la opción después desde **Upgrade/Downgrade Options** (WHMCS ejecuta el cambio de paquete del módulo al pagarse la factura del upgrade). Volver el control a `0` devuelve la línea a las conexiones del paquete. Igual que Max Connections, necesita una clave **Admin** en el panel; con una clave de Reseller las conexiones las decide el panel.
+El resultado se envía al crear la línea, en cada renovación, al pulsar **Sync line to panel** y cada vez que el cliente cambia la opción después desde **Upgrade/Downgrade Options** (WHMCS ejecuta el cambio de paquete del módulo al pagarse la factura del upgrade). Volver el control a `0` devuelve la línea a las conexiones del paquete. Igual que Max Connections, necesita una clave **Admin** en el panel; con una clave de Reseller las conexiones las decide el panel.
 | **Sub-Reseller Member Group ID** | Id numérico del grupo de miembros del panel al que pertenecerán las nuevas cuentas Sub-Reseller. Solo se usa cuando **Account Type** es `Sub-Reseller` y la clave del panel es de tipo **Admin**; las claves de Reseller heredan el grupo desde su propia configuración de sub-reseller. | Por ejemplo `4`. |
 
 **Qué pasa cuando WHMCS crea el servicio:**
@@ -200,9 +201,9 @@ Estas son las acciones que harás como administrador y qué provocan en el panel
 
 | Acción | Dónde se pulsa en WHMCS | Qué pasa en el panel |
 |---|---|---|
-| **Suspender** | En el servicio del cliente, botón de suspender. | En una **línea**, la línea se desactiva y el cliente deja de poder ver. En un **sub-reseller**, la API del panel no expone un campo de estado del reseller, así que el módulo devuelve un error claro y conserva el vínculo entre WHMCS y el panel para que puedas desactivar la cuenta manualmente desde el panel. |
-| **Reactivar** | En el servicio del cliente, botón de reactivar. | En una **línea**, la línea se vuelve a activar. En un **sub-reseller**, el módulo devuelve el mismo error claro por el mismo motivo y conserva el vínculo entre WHMCS y el panel para que puedas reactivar la cuenta desde el panel. |
-| **Renovar** | Al renovar la factura / el servicio. | La línea se renueva y su fecha de vencimiento se actualiza. |
+| **Suspender** | En el servicio del cliente, botón de suspender. | En una **línea**, la línea se desactiva y el cliente deja de poder ver, salvo que el **Suspend action** del producto sea `Leave the line untouched, let it expire`, en cuyo caso el panel no se llama (mira más abajo). En un **sub-reseller**, la API del panel no expone un campo de estado del reseller, así que el módulo devuelve un error claro y conserva el vínculo entre WHMCS y el panel para que puedas desactivar la cuenta manualmente desde el panel. |
+| **Reactivar** | En el servicio del cliente, botón de reactivar. | En una **línea**, la línea se vuelve a activar, salvo que el **Suspend action** del producto sea `Leave the line untouched, let it expire`, en cuyo caso el panel no se llama (si desactivaste la línea a mano en el panel, sigue desactivada). En un **sub-reseller**, el módulo devuelve el mismo error claro por el mismo motivo y conserva el vínculo entre WHMCS y el panel para que puedas reactivar la cuenta desde el panel. |
+| **Renovar** | Al renovar la factura / el servicio. | La línea se renueva y su fecha de vencimiento se actualiza. El panel vuelve a aplicar el paquete en cada renovación, así que justo después de renovar el módulo vuelve a enviar las conexiones del producto (Max Connections más cualquier opción configurable de conexiones) y no deja las del paquete en la línea. Si ese paso extra falla, la renovación igual se informa como exitosa y el detalle queda en Module Logs: la línea ya está renovada en el panel y repetir la renovación la cobraría dos veces. |
 | **Terminar** | En el servicio del cliente, botón de terminar/cancelar. | En una **línea**, la línea se borra del panel. En un **sub-reseller**, el módulo devuelve un error claro porque la API del panel no puede desactivar al reseller y conserva el vínculo entre WHMCS y el panel para que puedas desactivar la cuenta manualmente sin perder estado. |
 | **Cambiar contraseña** | En el servicio del cliente, opción de cambiar contraseña. | La contraseña se cambia en el panel y se actualiza para el cliente. |
 | **Sync line to panel** | En el servicio del cliente (área admin), el botón **Sync line to panel**. | Envía los bouquets, notas y conexiones actuales del producto (Max Connections más cualquier opción configurable de conexiones) a la línea en el panel. Úsalo cuando editas los config options del producto sin cambiar el producto. |
@@ -216,6 +217,15 @@ Estas son las acciones que harás como administrador y qué provocan en el panel
 **Los bouquets del producto nuevo tienen que pertenecer al paquete nuevo.** Si alguno no pertenece, el panel rechaza el cambio y te dice qué ids están mal: no se aplica nada a la línea y el servicio se queda con el paquete de panel anterior. Corrige el campo Bouquets del producto y vuelve a intentarlo, o déjalo vacío para que la línea reciba todos los bouquets del paquete nuevo.
 
 Los cambios de paquete necesitan que tu panel se haya actualizado el **2026-09-14** o después. En un panel anterior el cambio **no** se aplica: la línea conserva su paquete original, solo se envían los bouquets, las notas y las conexiones, y WHMCS igual reporta éxito y registra el producto nuevo.
+
+### Qué pasa cuando se suspende un servicio
+
+Lo decide la opción **Suspend action** del producto, y es la opción que tienes que mirar cuando un cliente te pide que no le cortes la línea por una factura impaga:
+
+- **Disable the line on the panel**: la opción por defecto. Suspender el servicio desactiva la línea en el panel, así que el cliente deja de ver al instante, y al reactivar el servicio la línea se vuelve a activar. Es lo que el módulo hizo siempre.
+- **Leave the line untouched, let it expire**: suspender el servicio no cambia nada en el panel: la línea sigue funcionando hasta su propia fecha de vencimiento y después vence sola, sin que tengas que hacer nada. Reactivar el servicio tampoco toca el panel, así que una línea que desactivaste a mano en el panel sigue desactivada.
+
+En los dos casos WHMCS igual marca el servicio como suspendido o activo (las facturas, la automatización y el área de cliente funcionan como siempre); la diferencia está solo en el panel. La opción es por producto y solo afecta a los productos de tipo **Line**: los productos Sub-Reseller siguen intentando cambiar el estado del reseller en el panel.
 
 ---
 
@@ -364,6 +374,9 @@ Entra en **Addons → Xtream AI Panel → Bulk tools**, elige tu panel en el des
 
 **¿Mis clientes pueden elegir cuántas conexiones quieren?**
 Sí. Añade al producto una Opción Configurable de WHMCS llamada `extra_connections` (una cantidad desde 0, con precio por unidad) y el módulo la suma a las conexiones del paquete, en el pedido y cada vez que el cliente la cambie después. Mira "Dejar que el cliente compre conexiones extra" en la sección 6.
+
+**¿Una línea puede seguir funcionando si el servicio se suspende por una factura impaga?**
+Sí. En los Module Settings del producto pon el **Suspend action** en `Leave the line untouched, let it expire`. Suspender el servicio entonces no hace nada en el panel: la línea sigue funcionando hasta su propia fecha de vencimiento y después vence sola. Es una opción por producto, así que puedes dejar el valor por defecto (`Disable the line on the panel`) en todos los demás. Mira la sección 8.
 
 **¿Funciona con mi versión de PHP?**
 Sí, con **PHP 7.2 o superior**.
