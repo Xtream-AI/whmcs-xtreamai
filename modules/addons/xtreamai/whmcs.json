@@ -2,7 +2,7 @@
     "schema": "1.0",
     "type": "whmcs-addons",
     "name": "xtreamai",
-    "version": "1.5.1",
+    "version": "1.5.2",
     "license": "MIT",
     "category": "provisioning",
     "description": {

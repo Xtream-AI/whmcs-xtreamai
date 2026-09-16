@@ -88,10 +88,10 @@ final class Updater
             ];
         }
 
-        if (!class_exists('PharData')) {
+        if (!class_exists('PharData') && !function_exists('gzopen')) {
             return [
                 'ok' => false,
-                'message' => 'The Phar extension (PharData) is not available, so the release archive cannot be extracted.',
+                'message' => 'Neither the Phar extension (PharData) nor the zlib extension (gzopen) are available, so the release archive cannot be extracted.',
                 'paths' => $paths,
             ];
         }
@@ -206,19 +206,7 @@ final class Updater
         }
 
         try {
-            $archive = new \PharData($tarballPath);
-            $archive->decompress();
-            unset($archive);
-
-            $plainPath = preg_replace('/\.gz$/', '', $tarballPath);
-
-            if (!is_string($plainPath) || !is_file($plainPath)) {
-                throw new \RuntimeException('the archive could not be decompressed');
-            }
-
-            $plainArchive = new \PharData($plainPath);
-            $plainArchive->extractTo($extractDir, null, true);
-            unset($plainArchive);
+            self::extractTarGz($tarballPath, $extractDir);
         } catch (\Throwable $e) {
             self::removeTree($temp);
 
@@ -874,5 +862,207 @@ final class Updater
     private static function failure(string $message, array $steps): array
     {
         return ['ok' => false, 'message' => $message, 'steps' => $steps];
+    }
+
+    private static function extractTarGz(string $tarballPath, string $extractDir): void
+    {
+        if (class_exists('PharData')) {
+            try {
+                self::extractWithPhar($tarballPath, $extractDir);
+                return;
+            } catch (\Throwable $e) {
+                self::pruneExtractDir($extractDir);
+
+            }
+        }
+
+        self::extractTarGzPurePhp($tarballPath, $extractDir);
+    }
+
+    private static function extractWithPhar(string $tarballPath, string $extractDir): void
+    {
+        $archive = new \PharData($tarballPath);
+        $archive->decompress();
+        unset($archive);
+
+        $plainPath = preg_replace('/\.gz$/', '', $tarballPath);
+
+        if (!is_string($plainPath) || !is_file($plainPath)) {
+            throw new \RuntimeException('the archive could not be decompressed');
+        }
+
+        $plainArchive = new \PharData($plainPath);
+        $plainArchive->extractTo($extractDir, null, true);
+        unset($plainArchive);
+    }
+
+    private static function pruneExtractDir(string $extractDir): void
+    {
+        if (!is_dir($extractDir)) {
+            return;
+        }
+        foreach ((array) @scandir($extractDir) as $entry) {
+            if ($entry === '.' || $entry === '..' || $entry === false) {
+                continue;
+            }
+            self::removeTree($extractDir . '/' . $entry);
+        }
+    }
+
+    private static function extractTarGzPurePhp(string $tarballPath, string $extractDir): void
+    {
+        if (!function_exists('gzopen')) {
+            throw new \RuntimeException('the zlib extension (gzopen) is required to extract the archive without PharData');
+        }
+
+        $fh = @gzopen($tarballPath, 'rb');
+        if ($fh === false) {
+            throw new \RuntimeException('could not open the release archive with gzopen');
+        }
+
+        try {
+            $longName = null;
+
+            while (!gzeof($fh)) {
+                $header = self::gzReadExact($fh, 512);
+
+                if ($header === '' || $header === str_repeat("\0", 512)) {
+                    break;
+                }
+
+                if (strlen($header) !== 512) {
+                    throw new \RuntimeException('unexpected end of tar header');
+                }
+
+                $name = rtrim(substr($header, 0, 100), "\0");
+                $sizeField = trim(substr($header, 124, 12), " \0");
+                $typeflag = substr($header, 156, 1);
+                $prefix = rtrim(substr($header, 345, 155), "\0");
+
+                if ($prefix !== '') {
+                    $name = $prefix . '/' . $name;
+                }
+
+                $size = $sizeField === '' ? 0 : (int) octdec($sizeField);
+                $blocks = (int) (($size + 511) / 512);
+
+                if ($typeflag === 'L') {
+                    $payload = self::gzReadExact($fh, $blocks * 512);
+                    $longName = rtrim(substr($payload, 0, $size), "\0");
+                    continue;
+                }
+
+                if ($typeflag === 'K' || $typeflag === 'x' || $typeflag === 'g') {
+                    self::gzSkip($fh, $blocks * 512);
+                    continue;
+                }
+
+                if ($longName !== null) {
+                    $name = $longName;
+                    $longName = null;
+                }
+
+                if ($name === '') {
+                    self::gzSkip($fh, $blocks * 512);
+                    continue;
+                }
+
+                $target = self::joinSafeUnderRoot($extractDir, $name);
+                if ($target === null) {
+                    throw new \RuntimeException('unsafe path in archive: ' . $name);
+                }
+
+                $isDir = ($typeflag === '5') || (substr($name, -1) === '/');
+                if ($isDir) {
+                    if (!is_dir($target) && !@mkdir($target, 0755, true) && !is_dir($target)) {
+                        throw new \RuntimeException('could not create ' . $target);
+                    }
+                    self::gzSkip($fh, $blocks * 512);
+                    continue;
+                }
+
+                if ($typeflag !== '' && $typeflag !== '0' && $typeflag !== "\0") {
+                    self::gzSkip($fh, $blocks * 512);
+                    continue;
+                }
+
+                $parent = dirname($target);
+                if (!is_dir($parent) && !@mkdir($parent, 0755, true) && !is_dir($parent)) {
+                    throw new \RuntimeException('could not create ' . $parent);
+                }
+
+                $out = @fopen($target, 'wb');
+                if ($out === false) {
+                    throw new \RuntimeException('could not open ' . $target . ' for writing');
+                }
+
+                try {
+                    $remaining = $size;
+                    while ($remaining > 0) {
+                        $chunk = self::gzReadExact($fh, min(65536, $remaining));
+                        if ($chunk === '') {
+                            throw new \RuntimeException('unexpected end of file body for ' . $name);
+                        }
+                        if (fwrite($out, $chunk) === false) {
+                            throw new \RuntimeException('could not write ' . $target);
+                        }
+                        $remaining -= strlen($chunk);
+                    }
+                } finally {
+                    fclose($out);
+                }
+
+                $padding = $blocks * 512 - $size;
+                if ($padding > 0) {
+                    self::gzSkip($fh, $padding);
+                }
+            }
+        } finally {
+            gzclose($fh);
+        }
+    }
+
+    private static function gzReadExact($fh, int $length): string
+    {
+        $out = '';
+        while ($length > 0) {
+            $chunk = gzread($fh, $length);
+            if ($chunk === false || $chunk === '') {
+                break;
+            }
+            $out .= $chunk;
+            $length -= strlen($chunk);
+        }
+        return $out;
+    }
+
+    private static function gzSkip($fh, int $length): void
+    {
+        while ($length > 0) {
+            $chunk = gzread($fh, min(65536, $length));
+            if ($chunk === false || $chunk === '') {
+                return;
+            }
+            $length -= strlen($chunk);
+        }
+    }
+
+    private static function joinSafeUnderRoot(string $base, string $rel): ?string
+    {
+        $rel = str_replace('\\', '/', $rel);
+        $parts = [];
+        foreach (explode('/', $rel) as $part) {
+            if ($part === '' || $part === '.') {
+                continue;
+            }
+            if ($part === '..') {
+                return null;
+            }
+            $parts[] = $part;
+        }
+        if ($parts === []) {
+            return null;
+        }
+        return $base . '/' . implode('/', $parts);
     }
 }
