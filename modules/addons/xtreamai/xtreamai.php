@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.5.0',
+        'version'     => '1.5.1',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -47,6 +47,7 @@ function xtreamai_upgrade($vars)
 {
     xtreamai_require_bootstrap();
     \WhmcsXtreamAI\Settings::ensureTables();
+    xtreamai_repair_panel_urls();
 }
 
 function xtreamai_output($vars)
@@ -54,6 +55,7 @@ function xtreamai_output($vars)
     xtreamai_require_bootstrap();
     if (class_exists('WhmcsXtreamAI\\Settings')) {
         \WhmcsXtreamAI\Settings::ensureTables();
+        xtreamai_repair_panel_urls();
     }
 
     $modulelink = isset($vars['modulelink']) ? (string) $vars['modulelink'] : 'addonmodules.php?module=xtreamai';
@@ -239,11 +241,11 @@ function xtreamai_save_panel()
     $id      = (int) ($_POST['id'] ?? 0);
     $name    = trim((string) ($_POST['name'] ?? ''));
     $apiUrl  = xtreamai_normalize_url((string) ($_POST['api_url'] ?? ''));
-    $m3uUrl  = trim((string) ($_POST['m3u_url'] ?? ''));
+    $m3uUrl  = xtreamai_normalize_url_entities(trim((string) ($_POST['m3u_url'] ?? '')));
     if ($m3uUrl !== '' && !preg_match('#^https?://#i', $m3uUrl)) {
         throw new \RuntimeException('M3U URL must start with http:// or https://');
     }
-    $epgUrl  = trim((string) ($_POST['epg_url'] ?? ''));
+    $epgUrl  = xtreamai_normalize_url_entities(trim((string) ($_POST['epg_url'] ?? '')));
     if ($epgUrl !== '' && !preg_match('#^https?://#i', $epgUrl)) {
         throw new \RuntimeException('EPG URL must start with http:// or https://');
     }
@@ -951,6 +953,49 @@ function xtreamai_bulk_admin_username(): string
     }
 
     throw new \RuntimeException('No WHMCS admin account was found to run the module command.');
+}
+
+function xtreamai_normalize_url_entities(string $value): string
+{
+    if ($value === '' || strpos($value, '&') === false) {
+        return $value;
+    }
+    for ($i = 0; $i < 8; $i++) {
+        $decoded = htmlspecialchars_decode($value, ENT_QUOTES);
+        if ($decoded === $value) {
+            return $decoded;
+        }
+        $value = $decoded;
+    }
+    return $value;
+}
+
+function xtreamai_repair_panel_urls(): void
+{
+    if (!class_exists('WhmcsXtreamAI\\Settings') || !class_exists('WhmcsXtreamAI\\PanelStore')) {
+        return;
+    }
+    try {
+        if (\WhmcsXtreamAI\Settings::get('url_htmlentities_cleanup_v1') === '1') {
+            return;
+        }
+        foreach (\WhmcsXtreamAI\PanelStore::all() as $panel) {
+            $original = [
+                'm3u_url' => isset($panel->m3u_url) ? (string) $panel->m3u_url : '',
+                'epg_url' => isset($panel->epg_url) ? (string) $panel->epg_url : '',
+            ];
+            $fixed = [
+                'm3u_url' => xtreamai_normalize_url_entities($original['m3u_url']),
+                'epg_url' => xtreamai_normalize_url_entities($original['epg_url']),
+            ];
+            if ($fixed !== $original) {
+                \WhmcsXtreamAI\PanelStore::update((int) $panel->id, $fixed);
+            }
+        }
+        \WhmcsXtreamAI\Settings::set('url_htmlentities_cleanup_v1', '1');
+    } catch (\Throwable $e) {
+
+    }
 }
 
 function xtreamai_render($modulelink, $view, $flash, $editId, $panelId)
