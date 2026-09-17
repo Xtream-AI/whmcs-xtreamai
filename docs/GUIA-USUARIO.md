@@ -163,7 +163,7 @@ No necesitas un producto por cada cantidad de conexiones. Añade una **Opción C
 | `extra_connections` (o `Extra Connections`, `additional_connections`) | Se suma a la base. La base es el **Max Connections** del producto si no es `0`; si es `0`, las conexiones del paquete del panel. | Una opción de tipo **Quantity** de `0` a `4` con precio por unidad. Con un paquete de 1 conexión el cliente obtiene de 1 a 5 conexiones, y `0` no cuesta nada extra. |
 | `max_connections` (o `Connections`) | Reemplaza la base por completo. Con `0` se usa Max Connections y, si es `0`, el paquete. | Un **Dropdown** con `1`, `2`, `3`... |
 
-El resultado se envía al crear la línea, en cada renovación, al pulsar **Sync line to panel** y cada vez que el cliente cambia la opción después desde **Upgrade/Downgrade Options** (WHMCS ejecuta el cambio de paquete del módulo al pagarse la factura del upgrade). Volver el control a `0` devuelve la línea a las conexiones del paquete. Igual que Max Connections, necesita una clave **Admin** en el panel; con una clave de Reseller las conexiones las decide el panel.
+El resultado se envía al crear la línea, en cada renovación, al pulsar **Sync bouquets, notes & connections** y cada vez que el cliente cambia la opción después desde **Upgrade/Downgrade Options** (WHMCS ejecuta el cambio de paquete del módulo al pagarse la factura del upgrade). Volver el control a `0` devuelve la línea a las conexiones del paquete. Igual que Max Connections, necesita una clave **Admin** en el panel; con una clave de Reseller las conexiones las decide el panel.
 | **Sub-Reseller Member Group ID** | Id numérico del grupo de miembros del panel al que pertenecerán las nuevas cuentas Sub-Reseller. Solo se usa cuando **Account Type** es `Sub-Reseller` y la clave del panel es de tipo **Admin**; las claves de Reseller heredan el grupo desde su propia configuración de sub-reseller. | Por ejemplo `4`. |
 
 **Qué pasa cuando WHMCS crea el servicio:**
@@ -203,10 +203,15 @@ Estas son las acciones que harás como administrador y qué provocan en el panel
 |---|---|---|
 | **Suspender** | En el servicio del cliente, botón de suspender. | En una **línea**, la línea se desactiva y el cliente deja de poder ver, salvo que el **Suspend action** del producto sea `Leave the line untouched, let it expire`, en cuyo caso el panel no se llama (mira más abajo). En un **sub-reseller**, la API del panel no expone un campo de estado del reseller, así que el módulo devuelve un error claro y conserva el vínculo entre WHMCS y el panel para que puedas desactivar la cuenta manualmente desde el panel. |
 | **Reactivar** | En el servicio del cliente, botón de reactivar. | En una **línea**, la línea se vuelve a activar, salvo que el **Suspend action** del producto sea `Leave the line untouched, let it expire`, en cuyo caso el panel no se llama (si desactivaste la línea a mano en el panel, sigue desactivada). En un **sub-reseller**, el módulo devuelve el mismo error claro por el mismo motivo y conserva el vínculo entre WHMCS y el panel para que puedas reactivar la cuenta desde el panel. |
-| **Renovar** | Al renovar la factura / el servicio. | La línea se renueva y su fecha de vencimiento se actualiza. El panel vuelve a aplicar el paquete en cada renovación, así que justo después de renovar el módulo vuelve a enviar las conexiones del producto (Max Connections más cualquier opción configurable de conexiones) y no deja las del paquete en la línea. Si ese paso extra falla, la renovación igual se informa como exitosa y el detalle queda en Module Logs: la línea ya está renovada en el panel y repetir la renovación la cobraría dos veces. |
+| **Renovar** | Al renovar la factura / el servicio. | La línea se renueva y su fecha de vencimiento se actualiza. El panel vuelve a aplicar el paquete en cada renovación, así que justo después de renovar el módulo vuelve a enviar las conexiones del producto (Max Connections más cualquier opción configurable de conexiones) y no deja las del paquete en la línea. Si ese paso extra falla, la renovación igual se informa como exitosa y el detalle queda en Module Logs: la línea ya está renovada en el panel y repetir la renovación la cobraría dos veces. Cada renovación del mismo ciclo lleva la misma clave de idempotencia, así que un doble clic o un reintento de WHMCS dentro de ese ciclo devuelve la respuesta del panel en vez de extender la línea una segunda vez. Si la línea estaba desactivada o bloqueada en el panel antes de renovar, la renovación sigue adelante (el panel vuelve a activar la línea) y la pestaña del panel y el log del módulo te lo dicen. |
 | **Terminar** | En el servicio del cliente, botón de terminar/cancelar. | En una **línea**, la línea se borra del panel. En un **sub-reseller**, el módulo devuelve un error claro porque la API del panel no puede desactivar al reseller y conserva el vínculo entre WHMCS y el panel para que puedas desactivar la cuenta manualmente sin perder estado. |
 | **Cambiar contraseña** | En el servicio del cliente, opción de cambiar contraseña. | La contraseña se cambia en el panel y se actualiza para el cliente. |
-| **Sync line to panel** | En el servicio del cliente (área admin), el botón **Sync line to panel**. | Envía los bouquets, notas y conexiones actuales del producto (Max Connections más cualquier opción configurable de conexiones) a la línea en el panel. Úsalo cuando editas los config options del producto sin cambiar el producto. |
+| **Sync bouquets, notes & connections** | En el servicio del cliente (área admin), el botón **Sync bouquets, notes & connections**. | Envía los bouquets, notas y conexiones actuales del producto (Max Connections más cualquier opción configurable de conexiones) a la línea en el panel. Úsalo cuando editas los config options del producto sin cambiar el producto. **No** renueva la línea, no gasta créditos y no cambia el estado ni el vencimiento del panel; guarda en el servicio el estado y el vencimiento que responde el panel y deja un resumen en **Last module action**. |
+| **Refresh from panel** | En el servicio del cliente (área admin), el botón **Refresh from panel**. | Lee la línea del panel ahora mismo en vez de usar la copia guardada en la última comprobación, y actualiza todos los campos de la pestaña del panel. |
+| **Set panel expiry to WHMCS next due date** | En el servicio del cliente (área admin), el botón con ese nombre. | Copia la Next Due Date de WHMCS a la línea del panel, a las 12:00 UTC de ese día. El panel solo acepta el vencimiento con clave admin: con clave Reseller el módulo lo rechaza con un mensaje claro y no envía nada al panel. |
+| **Set WHMCS next due date to panel expiry** | En el servicio del cliente (área admin), el botón con ese nombre. | Lo contrario: la Next Due Date de WHMCS pasa a ser el vencimiento que tiene la línea en el panel. También funciona con clave Reseller. |
+
+Los cuatro botones aparecen solo en productos de tipo **Line**: los productos Sub-Reseller no los muestran.
 
 **Cambio de producto (upgrade o downgrade).** Cuando cambias el producto WHMCS de un servicio, o el cliente cambia una opción configurable como las conexiones extra, el módulo lo maneja automáticamente:
 
@@ -217,6 +222,31 @@ Estas son las acciones que harás como administrador y qué provocan en el panel
 **Los bouquets del producto nuevo tienen que pertenecer al paquete nuevo.** Si alguno no pertenece, el panel rechaza el cambio y te dice qué ids están mal: no se aplica nada a la línea y el servicio se queda con el paquete de panel anterior. Corrige el campo Bouquets del producto y vuelve a intentarlo, o déjalo vacío para que la línea reciba todos los bouquets del paquete nuevo.
 
 Los cambios de paquete necesitan que tu panel se haya actualizado el **2026-09-14** o después. En un panel anterior el cambio **no** se aplica: la línea conserva su paquete original, solo se envían los bouquets, las notas y las conexiones, y WHMCS igual reporta éxito y registra el producto nuevo.
+
+### La pestaña del panel de un servicio (área admin)
+
+Cuando abres un servicio en el área de administración, el módulo añade un bloque con el estado real de esa línea en el panel. Es el sitio donde mirar antes de tocar nada, porque el área de cliente y las facturas muestran datos de WHMCS, no del panel:
+
+| Campo | Qué te dice |
+|---|---|
+| **Panel** | Qué entrada de panel usa este servicio. |
+| **Panel line ID** y **Panel username** | El id y el usuario de la línea en el panel. |
+| **Line status** | `Active`, `Expired` (la línea pasó su vencimiento en el panel), `Disabled` (la línea está desactivada) o `Blocked by panel` (la administración del panel la bloqueó). Un bloqueo manda sobre el interruptor. |
+| **Active connections** | Cuántas conexiones hay abiertas ahora mismo. |
+| **Panel expiry** | Cuándo vence la línea en el panel. |
+| **WHMCS next due date** | Cuándo cree WHMCS que toca el próximo pago. Es otra cosa distinta: editarla en WHMCS no toca el panel. |
+| **Panel checked** | Cuándo se leyó el panel por última vez y si se leyó ahora (`live`) o se tomó de la copia guardada en los últimos 90 segundos (`cached`). Si no se puede llegar al panel, el campo te dice por qué y muestra la hora de los últimos datos que sí se pudieron leer. La página sigue funcionando. |
+| **Last module action** | Lo último que hizo el módulo en este servicio y cuándo, por ejemplo una renovación o un sync. |
+| **Warning** | Solo cuando hay algo que mirar, por ejemplo si la Next Due Date de WHMCS y el vencimiento del panel no coinciden. |
+
+**Cuando las dos fechas no coinciden**, el aviso te dice cuál es cuál. Para eso están los botones de debajo del bloque:
+
+- **Sync bouquets, notes & connections** envía los bouquets, las notas y las conexiones del producto a la línea. No renueva, no gasta créditos y no cambia el estado ni el vencimiento en el panel.
+- **Refresh from panel** vuelve a leer el panel ahora mismo.
+- **Set panel expiry to WHMCS next due date** copia la Next Due Date de WHMCS al panel. Necesita una clave **Admin** en la entrada del panel; con una clave Reseller te lo dice y no cambia nada.
+- **Set WHMCS next due date to panel expiry** hace lo contrario, con la fecha que tiene el panel.
+
+**Fechas.** El panel guarda el vencimiento como un momento exacto (UTC) y WHMCS guarda la Next Due Date como un día suelto, así que el módulo trabaja siempre con días completos en UTC. Cuando copia una fecha de WHMCS al panel usa las 12:00 UTC de ese día: así la fecha no se desplaza un día según dónde estés tú o esté tu servidor.
 
 ### Qué pasa cuando se suspende un servicio
 
@@ -271,10 +301,10 @@ En el panel no se crea ni se borra nada: esta herramienta solo restaura el vínc
 
 ### 9.3 Sync all services (sincronizar todos los servicios)
 
-Ejecuta la misma acción que el botón **Sync line to panel** de cada servicio, pero para todos a la vez: los bouquets, las notas y las conexiones (Max Connections más cualquier opción configurable de conexiones, como `extra_connections`) de cada producto se recalculan y se envían a su línea del panel.
+Ejecuta la misma acción que el botón **Sync bouquets, notes & connections** de cada servicio, pero para todos a la vez: los bouquets, las notas y las conexiones (Max Connections más cualquier opción configurable de conexiones, como `extra_connections`) de cada producto se recalculan y se envían a su línea del panel. El estado y el vencimiento que responde el panel también se guardan en cada servicio.
 
 1. Elige el panel. (No hace falta haber vinculado en esta misma sesión, pero los servicios sí necesitan tener una línea vinculada.)
-2. Marca **Include Suspended services** si también deben actualizarse los servicios suspendidos.
+2. Marca **Include Suspended services** si también deben actualizarse los servicios suspendidos. Sin marcarlo, los servicios cuyo estado en WHMCS es Suspended se omiten y el contador **Skipped (Suspended)** te dice cuántos quedaron fuera en cada lote. La casilla recuerda lo que elegiste la próxima vez que abras Bulk tools.
 3. Pon **Parallel requests** (de 1 a 4, 3 por defecto) en la misma fila: es cuántos servicios se actualizan a la vez. Cada petición se lleva su propia parte de los servicios, así que el tiempo total se divide aproximadamente por ese número. Déjalo en 1 si tu panel o tu servidor prefieren una sola llamada a la vez.
 4. Pulsa **Sync services** (sincronizar servicios).
 
@@ -313,7 +343,7 @@ Dentro de **Addons → Xtream AI Panel** tienes estas pestañas:
 
 **Sub-Resellers** — la lista de sub-resellers y sus créditos, con el ajuste de créditos.
 
-**Lines** — para buscar líneas. Puedes filtrar por **nombre de usuario** (campo "Username contains…") y por **estado** (All statuses / Enabled / Disabled).
+**Lines** — para buscar líneas. Puedes filtrar por **nombre de usuario** (campo "Username contains…") y por **estado** (All statuses / Enabled / Disabled). La columna **Status** de cada fila muestra los mismos cuatro valores que la pestaña del servicio: `Active`, `Expired`, `Disabled` y `Blocked by panel`.
 
 **Catalog** — para ver qué hay en tu panel: **Live Streams** (canales en directo) y **VOD** (películas y series). Tiene su propio buscador.
 
@@ -350,6 +380,9 @@ Cuando termines, pulsa **Save Settings** (Guardar ajustes).
 | **The reseller does not have enough credits or user slots.** | Tu cuenta del panel se quedó sin créditos o sin plazas para crear más líneas. | Añade créditos o plazas en tu panel (o a tu cuenta reseller). |
 | **No panel found. Add and activate a panel in Addons → Xtream AI Panel.** | El producto no tiene ningún panel asignado o no hay paneles activos. | Añade y activa un panel en Addons → Xtream AI Panel, y elígelo en el producto. |
 | **No package selected for this product.** | El producto no tiene un paquete elegido. | En la pestaña Module Settings del producto, elige un Package. |
+| **No package selected for service #135 (product "IPTV Line"): set the package in the product's Module Settings.** | Se intentó renovar un servicio cuyo producto no tiene paquete de panel. | Abre la pestaña Module Settings del producto, elige un Package y renueva otra vez. |
+| **Setting the panel expiry requires an admin panel key.** | Pulsaste **Set panel expiry to WHMCS next due date** en una entrada de panel con clave Reseller. No se envió nada al panel. | Renueva el servicio, cambia el vencimiento en el panel y usa luego **Set WHMCS next due date to panel expiry**, o cambia la entrada del panel a clave Admin. |
+| **Panel check failed: …** | No se pudo leer el panel al pulsar **Refresh from panel**. | Comprueba la conexión del panel con el botón Test y que la API key tenga permisos. La pestaña del servicio sigue funcionando con los datos que ya tenía. |
 | **Addon not installed. Install and activate the Xtream AI Panel addon first.** | El addon no está instalado o activado. | Actívalo en System Settings → Addon Modules. |
 | **Invalid security token. Please try again.** | La sesión de administrador caducó o la página se recargó mal. | Recarga la página y repite la acción. |
 | **This service has no panel line yet. Provision it first.** | El servicio todavía no tiene línea creada en el panel. | Crea el servicio (o espera a que WHMCS termine de crearlo). |

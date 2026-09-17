@@ -75,6 +75,9 @@ namespace WhmcsXtreamAI {
         public static $packageMaxConnectionsError = '';
         public static $renewResult = array('expires_at' => '2027-02-01 00:00:00');
         public static $updateError = '';
+        public static $updateLineResult = array();
+        public static $getLineResult = array();
+        public static $getLineError = '';
 
         private static function record($name, array $args)
         {
@@ -98,7 +101,7 @@ namespace WhmcsXtreamAI {
             return self::$packageMaxConnectionsValue;
         }
 
-        public static function renewLine($panelId, $lineId, $packageId, $bouquets = null)
+        public static function renewLine($panelId, $lineId, $packageId, $bouquets = null, $idempotencyKey = null)
         {
             self::record('renewLine', func_get_args());
 
@@ -111,6 +114,23 @@ namespace WhmcsXtreamAI {
             if (self::$updateError !== '') {
                 throw new \RuntimeException(self::$updateError);
             }
+
+            return self::$updateLineResult;
+        }
+
+        public static function getLine($panelId, $lineId, $quick = false)
+        {
+            self::record('getLine', func_get_args());
+            if (self::$getLineError !== '') {
+                throw new \RuntimeException(self::$getLineError);
+            }
+
+            return self::$getLineResult;
+        }
+
+        public static function lineConnections($panelId, $lineId, $quick = false)
+        {
+            self::record('lineConnections', func_get_args());
 
             return array();
         }
@@ -181,6 +201,8 @@ namespace WhmcsXtreamAI {
     {
         public static $rows = array();
         public static $statuses = array();
+        public static $actions = array();
+        public static $checks = array();
 
         public static function find($serviceId)
         {
@@ -194,6 +216,45 @@ namespace WhmcsXtreamAI {
                 'status' => $status,
                 'expires_at' => $expiresAt,
             );
+            if (isset(self::$rows[$serviceId])) {
+                self::$rows[$serviceId]['status'] = $status;
+                if ($expiresAt !== null) {
+                    self::$rows[$serviceId]['expires_at'] = $expiresAt;
+                }
+            }
+        }
+
+        public static function updateFromLine($serviceId, array $line)
+        {
+            self::updateStatus(
+                $serviceId,
+                \WhmcsXtreamAI\LineStatus::fromPanel($line),
+                isset($line['expires_at']) ? (string) $line['expires_at'] : null
+            );
+        }
+
+        public static function recordPanelCheck($serviceId, $checkedAt = null)
+        {
+            self::$checks[] = $serviceId;
+            if (isset(self::$rows[$serviceId])) {
+                self::$rows[$serviceId]['panel_checked_at'] = $checkedAt === null ? date('Y-m-d H:i:s') : $checkedAt;
+            }
+        }
+
+        public static function invalidatePanelCheck($serviceId)
+        {
+            if (isset(self::$rows[$serviceId])) {
+                self::$rows[$serviceId]['panel_checked_at'] = null;
+            }
+        }
+
+        public static function recordAction($serviceId, $action)
+        {
+            self::$actions[] = array('service_id' => $serviceId, 'action' => $action);
+            if (isset(self::$rows[$serviceId])) {
+                self::$rows[$serviceId]['last_action'] = $action;
+                self::$rows[$serviceId]['last_action_at'] = date('Y-m-d H:i:s');
+            }
         }
 
         public static function link($serviceId, $panelId, $panelAccountId, $username, $packageId)
@@ -211,17 +272,20 @@ namespace WhmcsXtreamAI {
 
     final class Settings
     {
+        public static $values = array();
+
         public static function ensureTables()
         {
         }
 
         public static function set($key, $value)
         {
+            self::$values[(string) $key] = (string) $value;
         }
 
         public static function get($key, $default = '')
         {
-            return $default;
+            return array_key_exists((string) $key, self::$values) ? self::$values[(string) $key] : $default;
         }
 
         public static function randomString($length, $type = 'alphanumeric')
@@ -326,7 +390,13 @@ namespace {
         \WhmcsXtreamAI\PanelApi::$packageMaxConnectionsError = '';
         \WhmcsXtreamAI\PanelApi::$renewResult = array('expires_at' => '2027-02-01 00:00:00');
         \WhmcsXtreamAI\PanelApi::$updateError = '';
+        \WhmcsXtreamAI\PanelApi::$updateLineResult = array();
+        \WhmcsXtreamAI\PanelApi::$getLineResult = array();
+        \WhmcsXtreamAI\PanelApi::$getLineError = '';
         \WhmcsXtreamAI\ServiceStore::$statuses = array();
+        \WhmcsXtreamAI\ServiceStore::$actions = array();
+        \WhmcsXtreamAI\ServiceStore::$checks = array();
+        \WhmcsXtreamAI\Settings::$values = array();
         $GLOBALS['moduleLog'] = array();
     }
 
@@ -622,6 +692,326 @@ namespace {
         'the new option offers none',
         'Leave the line untouched, let it expire',
         $options['suspend_action']['Options']['none']
+    );
+
+    section('D. Panel line status helper');
+
+    $now = 1800000000;
+    same(
+        'an enabled line inside its expiry is Active',
+        'Active',
+        \WhmcsXtreamAI\LineStatus::fromPanel(array('enabled' => true, 'admin_enabled' => true, 'exp_date' => $now + 1), $now)
+    );
+    same(
+        'an enabled line past its expiry is Expired',
+        'Expired',
+        \WhmcsXtreamAI\LineStatus::fromPanel(array('enabled' => true, 'admin_enabled' => true, 'exp_date' => $now - 1), $now)
+    );
+    same(
+        'a line switched off on the panel is Disabled',
+        'Disabled',
+        \WhmcsXtreamAI\LineStatus::fromPanel(array('enabled' => false, 'admin_enabled' => true, 'exp_date' => $now + 1), $now)
+    );
+    same(
+        'a line blocked on the panel is Blocked by panel',
+        'Blocked by panel',
+        \WhmcsXtreamAI\LineStatus::fromPanel(array('enabled' => true, 'admin_enabled' => false, 'exp_date' => $now + 1), $now)
+    );
+    same(
+        'the panel block wins over the disabled flag',
+        'Blocked by panel',
+        \WhmcsXtreamAI\LineStatus::fromPanel(array('enabled' => false, 'admin_enabled' => false, 'exp_date' => $now + 1), $now)
+    );
+    same(
+        'a line with no expiry date is Active',
+        'Active',
+        \WhmcsXtreamAI\LineStatus::fromPanel(array('enabled' => true, 'admin_enabled' => true, 'exp_date' => null), $now)
+    );
+    same(
+        'a date-only expiry in the past is Expired',
+        'Expired',
+        \WhmcsXtreamAI\LineStatus::fromPanel(array('enabled' => true, 'admin_enabled' => true, 'expires_at' => '2020-01-01'), $now)
+    );
+    same(
+        'the blocked status uses the danger badge',
+        'xtai-badge--danger',
+        \WhmcsXtreamAI\LineStatus::badgeClass('Blocked by panel')
+    );
+
+    section('E. Renew idempotency key');
+
+    $lineBefore = array(
+        'id' => '987654',
+        'username' => 'line_user',
+        'enabled' => true,
+        'admin_enabled' => true,
+        'exp_date' => 1790000000,
+        'expires_at' => '2026-10-01',
+    );
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = $lineBefore;
+    xtreamai_Renew(baseParams());
+    $firstKey = apiCalls('renewLine') ? apiCalls('renewLine')[0]['args'][4] : null;
+    same(
+        'the key is the hash of the service, the panel expiry and the package',
+        hash('sha256', 'whmcs-renew|135|1790000000|76'),
+        $firstKey
+    );
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = $lineBefore;
+    xtreamai_Renew(baseParams());
+    $secondKey = apiCalls('renewLine') ? apiCalls('renewLine')[0]['args'][4] : null;
+    same('a second renewal of the same cycle reuses the key', $firstKey, $secondKey);
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = array(
+        'id' => '987654',
+        'enabled' => true,
+        'admin_enabled' => true,
+        'exp_date' => 1800000000,
+        'expires_at' => '2027-01-15',
+    );
+    xtreamai_Renew(baseParams());
+    $thirdKey = apiCalls('renewLine') ? apiCalls('renewLine')[0]['args'][4] : null;
+    ok(
+        'the next cycle uses a different key',
+        $thirdKey !== $firstKey,
+        'both keys are ' . json_encode($thirdKey)
+    );
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = array(
+        'id' => '987654',
+        'enabled' => false,
+        'admin_enabled' => false,
+        'exp_date' => 1790000000,
+        'expires_at' => '2026-10-01',
+    );
+    $result = xtreamai_Renew(baseParams());
+    same('renew still succeeds on a line blocked by the panel', 'success', $result);
+    same('the blocked line is still renewed', 1, count(apiCalls('renewLine')));
+    ok('the blocked line is written to the module log', in_array('renew_state:info', loggedActions(), true));
+    ok(
+        'the blocked line is written to last_action',
+        strpos((string) \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action'], 'Blocked by panel') !== false,
+        (string) \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action']
+    );
+    same(
+        'the renewal summary carries both expiry dates and the package',
+        'Renewed: 01/10/2026 -> 01/02/2027 (package #76) · line was Blocked by panel and the panel enabled it again',
+        (string) \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action']
+    );
+
+    linkService();
+    resetApi();
+    $result = xtreamai_Renew(baseParams(array('configoption2' => '0')));
+    same(
+        'a missing package names the service and the product',
+        'No package selected for service #135 (product "IPTV Line"): set the package in the product\'s Module Settings.',
+        $result
+    );
+    same('a missing package never hits the panel', 0, count(apiCalls('renewLine')));
+
+    section('F. Push and pull expiry');
+
+    \WHMCS\Database\Capsule::$rows['tblhosting'][0]['nextduedate'] = '2026-10-01';
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$keyTypeValue = 'reseller';
+    $result = xtreamai_push_expiry(baseParams());
+    ok(
+        'a reseller key is rejected with an admin key message',
+        strpos((string) $result, 'requires an admin panel key') !== false,
+        (string) $result
+    );
+    same('the rejected push sends nothing to the panel', 0, count(apiCalls('updateLine')));
+    same('the rejected push does not read the line either', 0, count(apiCalls('getLine')));
+
+    linkService();
+    resetApi();
+    $result = xtreamai_push_expiry(baseParams());
+    same('an admin key pushes the expiry', 'success', $result);
+    same(
+        'the pushed expiry is the next due date at noon UTC',
+        strtotime('2026-10-01 12:00:00 UTC'),
+        apiCalls('updateLine') ? (int) apiCalls('updateLine')[0]['args'][2]['exp_date'] : null
+    );
+    ok(
+        'the pushed expiry is written to last_action',
+        strpos((string) \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action'], 'Panel expiry set to 01/10/2026') === 0,
+        (string) \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action']
+    );
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = array(
+        'id' => '987654',
+        'enabled' => true,
+        'admin_enabled' => true,
+        'exp_date' => 1804288400,
+        'expires_at' => '2027-03-05',
+    );
+    $result = xtreamai_pull_expiry(baseParams());
+    same('an admin key pulls the expiry', 'success', $result);
+    same(
+        'the WHMCS next due date follows the panel expiry',
+        '2027-03-05',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['nextduedate']
+    );
+    same('the pull reads the line once', 1, count(apiCalls('getLine')));
+    same('the pull invalidates the cached panel check', null, \WhmcsXtreamAI\ServiceStore::$rows[135]['panel_checked_at']);
+
+    section('G. Sync persists the panel state');
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$updateLineResult = array(
+        'id' => '987654',
+        'username' => 'line_user',
+        'enabled' => true,
+        'admin_enabled' => true,
+        'exp_date' => 1804288400,
+        'expires_at' => '2027-03-05',
+    );
+    $result = xtreamai_sync(baseParams());
+    same('sync returns success', 'success', $result);
+    same(
+        'sync pushes the notes and the bouquets',
+        array('notes' => 'WHMCS:135', 'bouquets' => array(14)),
+        apiCalls('updateLine') ? apiCalls('updateLine')[0]['args'][2] : null
+    );
+    same('sync stores the panel expiry', '2027-03-05', \WhmcsXtreamAI\ServiceStore::$rows[135]['expires_at']);
+    same('sync stores the panel status', 'Active', \WhmcsXtreamAI\ServiceStore::$rows[135]['status']);
+    same(
+        'sync leaves a summary in last_action',
+        'Synced notes, bouquets (1) · panel: Active, expires 05/03/2027',
+        (string) \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action']
+    );
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$updateLineResult = array(
+        'id' => '987654',
+        'enabled' => true,
+        'admin_enabled' => true,
+        'exp_date' => 1700000000,
+        'expires_at' => '2023-11-14',
+    );
+    xtreamai_sync(baseParams());
+    same('sync stores an expired line as Expired', 'Expired', \WhmcsXtreamAI\ServiceStore::$rows[135]['status']);
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$updateLineResult = array(
+        'id' => '987654',
+        'enabled' => false,
+        'admin_enabled' => true,
+        'exp_date' => 1804288400,
+        'expires_at' => '2027-03-05',
+    );
+    xtreamai_sync(baseParams());
+    same('sync stores a switched off line as Disabled', 'Disabled', \WhmcsXtreamAI\ServiceStore::$rows[135]['status']);
+
+    section('H. Admin service tab');
+
+    linkService();
+    resetApi();
+    unset(
+        \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action'],
+        \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action_at'],
+        \WhmcsXtreamAI\ServiceStore::$rows[135]['panel_checked_at']
+    );
+    \WHMCS\Database\Capsule::$rows['tblhosting'][0]['nextduedate'] = '2026-10-01';
+    \WhmcsXtreamAI\PanelApi::$getLineResult = array(
+        'id' => '987654',
+        'username' => 'line_user',
+        'enabled' => true,
+        'admin_enabled' => true,
+        'exp_date' => 1790000000,
+        'expires_at' => '2026-10-01',
+    );
+
+    $fields = xtreamai_AdminServicesTabFields(baseParams());
+    same('the tab names the panel line id', '987654', isset($fields['Panel line ID']) ? $fields['Panel line ID'] : null);
+    same('the tab names the panel username', 'line_user', isset($fields['Panel username']) ? $fields['Panel username'] : null);
+    same('the tab shows the panel status', 'Active', isset($fields['Line status']) ? $fields['Line status'] : null);
+    same('the tab shows the WHMCS next due date', '01/10/2026', isset($fields['WHMCS next due date']) ? $fields['WHMCS next due date'] : null);
+    same('the tab shows the panel expiry', '01/10/2026', isset($fields['Panel expiry']) ? $fields['Panel expiry'] : null);
+    same('the tab reports no module action yet', 'None yet', isset($fields['Last module action']) ? $fields['Last module action'] : null);
+    same('the first tab render reads the panel once', 1, count(apiCalls('getLine')));
+    ok('the first tab render is marked live', substr((string) $fields['Panel checked'], -4) === 'live', (string) $fields['Panel checked']);
+
+    $fields = xtreamai_AdminServicesTabFields(baseParams());
+    same('the second tab render reuses the cached check', 1, count(apiCalls('getLine')));
+    ok('the cached render says cached', substr((string) $fields['Panel checked'], -6) === 'cached', (string) $fields['Panel checked']);
+
+    \WhmcsXtreamAI\PanelApi::$getLineResult = array(
+        'id' => '987654',
+        'username' => 'line_user',
+        'enabled' => true,
+        'admin_enabled' => true,
+        'exp_date' => 1820000000,
+        'expires_at' => '2027-09-01',
+    );
+    \WhmcsXtreamAI\Settings::$values['last_update_warning'] = 'Dropped admin-only fields on reseller key: max_connections';
+    $result = xtreamai_refresh(baseParams());
+    same('the refresh button returns success', 'success', $result);
+    same('the refresh button forces a panel read', 2, count(apiCalls('getLine')));
+    same(
+        'the refresh button leaves a summary in last_action',
+        'Panel check: Active, expires 01/09/2027',
+        (string) \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action']
+    );
+
+    $fields = xtreamai_AdminServicesTabFields(baseParams());
+    ok(
+        'the tab warns about the date divergence',
+        strpos((string) $fields['Warning'], 'WHMCS next due date is 01/10/2026, the panel line expires 01/09/2027') !== false,
+        (string) $fields['Warning']
+    );
+    ok(
+        'the tab shows the update warning',
+        strpos((string) $fields['Warning'], 'Dropped admin-only fields on reseller key: max_connections') !== false,
+        (string) $fields['Warning']
+    );
+    same(
+        'the update warning is cleared once shown',
+        '',
+        (string) \WhmcsXtreamAI\Settings::get('last_update_warning', '')
+    );
+
+    \WhmcsXtreamAI\PanelApi::$getLineError = 'Could not reach the panel.';
+    \WhmcsXtreamAI\ServiceStore::invalidatePanelCheck(135);
+    $fields = xtreamai_AdminServicesTabFields(baseParams());
+    ok(
+        'a failed check is reported without breaking the tab',
+        strpos((string) $fields['Panel checked'], 'Panel check: failed (Could not reach the panel.)') === 0,
+        (string) $fields['Panel checked']
+    );
+
+    linkService();
+    resetApi();
+    $fields = xtreamai_AdminServicesTabFields(baseParams(array('configoption5' => 'reseller')));
+    same('a Sub-Reseller service is never read as a line', 0, count(apiCalls('getLine')));
+    same(
+        'a Sub-Reseller service says the panel check does not apply',
+        'Not applicable to Sub-Reseller accounts',
+        isset($fields['Panel checked']) ? $fields['Panel checked'] : null
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    $fields = xtreamai_AdminServicesTabFields(baseParams());
+    same(
+        'an unlinked service is explained in the tab',
+        'Not linked yet. Provision the service or use Bulk tools &gt; Link existing services.',
+        isset($fields['Panel line']) ? $fields['Panel line'] : null
     );
 
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";

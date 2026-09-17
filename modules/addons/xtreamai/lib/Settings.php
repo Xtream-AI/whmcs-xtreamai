@@ -79,6 +79,20 @@ final class Settings
             });
         }
 
+        if ($schema->hasTable(self::SERVICES_TABLE)) {
+            $schema->table(self::SERVICES_TABLE, static function ($table) use ($schema): void {
+                if (!$schema->hasColumn(self::SERVICES_TABLE, 'panel_checked_at')) {
+                    $table->timestamp('panel_checked_at')->nullable();
+                }
+                if (!$schema->hasColumn(self::SERVICES_TABLE, 'last_action')) {
+                    $table->string('last_action', 255)->nullable();
+                }
+                if (!$schema->hasColumn(self::SERVICES_TABLE, 'last_action_at')) {
+                    $table->timestamp('last_action_at')->nullable();
+                }
+            });
+        }
+
         if ($schema->hasTable(self::PANELS_TABLE)) {
             $schema->table(self::PANELS_TABLE, static function ($table) use ($schema): void {
                 if (!$schema->hasColumn(self::PANELS_TABLE, 'key_type')) {

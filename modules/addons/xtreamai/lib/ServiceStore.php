@@ -73,6 +73,46 @@ final class ServiceStore
 
     
 
+    public static function updateFromLine(int $serviceId, array $line): void
+    {
+        self::updateStatus(
+            $serviceId,
+            LineStatus::fromPanel($line),
+            isset($line['expires_at']) ? (string) $line['expires_at'] : null
+        );
+    }
+
+    
+
+    public static function recordPanelCheck(int $serviceId, ?string $checkedAt = null): void
+    {
+        Capsule::table(self::TABLE)->where('service_id', $serviceId)->update([
+            'panel_checked_at' => $checkedAt === null ? date('Y-m-d H:i:s') : $checkedAt,
+        ]);
+    }
+
+    
+
+    public static function invalidatePanelCheck(int $serviceId): void
+    {
+        Capsule::table(self::TABLE)->where('service_id', $serviceId)->update([
+            'panel_checked_at' => null,
+        ]);
+    }
+
+    
+
+    public static function recordAction(int $serviceId, string $action): void
+    {
+        Capsule::table(self::TABLE)->where('service_id', $serviceId)->update([
+            'last_action' => substr($action, 0, 255),
+            'last_action_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+    }
+
+    
+
     public static function unlink(int $serviceId): void
     {
         Capsule::table(self::TABLE)->where('service_id', $serviceId)->delete();

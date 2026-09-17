@@ -26,17 +26,29 @@ the lifecycle:
   billing cycles). Renew also re-applies the line's connection count
   (Max Connections plus any connections configurable option) when the
   panel's renew left the line on the package's own count, so a renewal
-  never downgrades a customer to the package value.
+  never downgrades a customer to the package value. Each renewal of the
+  same cycle sends a deterministic `Idempotency-Key` built from the
+  service, the panel expiry read before renewing and the package, so a
+  double click or a WHMCS retry inside the same cycle never extends the
+  line twice.
 - Per-product **Suspend action**: whether a WHMCS suspension disables the
   line on the panel (default) or leaves it untouched so it simply
   expires on its own date.
 - Client-area card with credentials, M3U URL, EPG URL and active
   connections. Both URLs accept `{username}` and `{password}`
   placeholders, replaced per client (URL-encoded).
-- Admin service tab with a read-only panel/line summary and a
-  **Sync line to panel** button that pushes the current product's
-  bouquets, notes and `max_connections` to the panel line without a
-  renewal.
+- Admin service tab with the live panel state: panel, panel line id,
+  panel username, line status (`Active`, `Expired`, `Disabled`,
+  `Blocked by panel`), active connections, panel expiry, the WHMCS next
+  due date, when the panel was last checked and the last module action
+  on that service. The tab reads the panel through a short-timeout check
+  cached for 90 seconds, shows why a check failed instead of silently
+  keeping old data, and warns when the WHMCS next due date and the panel
+  expiry differ by more than a day. Four module buttons: **Sync
+  bouquets, notes & connections** (no renewal, no state or expiry
+  change), **Refresh from panel** (forces the check), **Set panel expiry
+  to WHMCS next due date** (admin key only) and **Set WHMCS next due
+  date to panel expiry**.
 - Product editor filters packages by type instantly, offers a bouquet
   multi-picker, and shows the reseller credits balance.
 
@@ -93,7 +105,12 @@ never duplicates rows and never breaks a link that already exists.
    linked, active service of the panel through WHMCS's local API, so the
    connection count (including the `extra_connections` configurable
    option), bouquets and notes are recomputed exactly as when you press
-   **Sync line to panel** on a single service. The **Parallel requests**
+   **Sync bouquets, notes & connections** on a single service; the panel
+   status and expiry the panel returns are stored on the service too.
+   Services that are Suspended in WHMCS are left out unless you tick
+   **Include Suspended services**, and every batch reports how many were
+   skipped for that reason. The checkbox remembers its state per tool in
+   the browser. The **Parallel requests**
    selector next to the **Include Suspended services** checkbox (1 to 4,
    3 by default) sends that many of those calls at the same time: each
    request works on its own share of the services while the progress bar,
@@ -122,6 +139,7 @@ which parts of the module light up:
 |---|---|---|
 | Line products (create / suspend / unsuspend / renew / password / terminate) | Yes (owner inferred from the key) | Yes, with `Admin owner member_id` set on the panel entry |
 | Change the panel package of a live line (WHMCS product upgrade or downgrade) | No (terminate and re-provision) | Yes, without renewing the line or spending credits |
+| Set the panel expiry from the WHMCS next due date (service tab button) | No (clear error, nothing is sent) | Yes |
 | Catalog (packages, bouquets, streams, VOD), `me` | Yes | Yes |
 | Create sub-reseller | Yes | Yes |
 | Sub-Reseller product lifecycle (reset password/credits) | No (403) | Yes |
@@ -248,8 +266,8 @@ per line. Leave it at `0` to keep the package value; `0` never means
 unlimited, the panel API does not allow unlimited lines. Non-zero
 values apply only when the panel entry uses an **Admin** key; reseller
 keys silently ignore this field. The value is absolute and behaves the
-same everywhere: on creation, on **Sync line to panel**, and on a
-product change that swaps the panel package.
+same everywhere: on creation, on **Sync bouquets, notes &
+connections**, and on a product change that swaps the panel package.
 
 **Selling extra connections.** Customers can pick their own connection
 count through a WHMCS **Configurable Option** on the product. The module
@@ -266,10 +284,11 @@ reads it by name, case-insensitive, ignoring the `|Display name` part:
   A dropdown of `1`, `2`, `3` gives exactly that many connections. A
   value of `0` falls back to Max Connections, then to the package.
 
-The resulting number is sent on creation, on renew, on **Sync line to
-panel** and on every product or configurable-option change, so a
-customer moving the slider from 2 back to 0 gets the package count
-back. Both option kinds need an **Admin** key on the panel entry.
+The resulting number is sent on creation, on renew, on **Sync bouquets,
+notes & connections** and on every product or configurable-option
+change, so a customer moving the slider from 2 back to 0 gets the
+package count back. Both option kinds need an **Admin** key on the panel
+entry.
 
 The panel's renew endpoint applies the package template to the line, so
 it writes the package's own connection count and clears the trial flag.
@@ -304,6 +323,57 @@ so you can configure it product by product. Sub-Reseller products ignore
 it and keep trying to change the reseller status on the panel. WHMCS's
 service status is updated in both cases, so invoices, automation and the
 client area behave as usual.
+
+### The service tab in the admin area
+
+Opening a service in the WHMCS admin area shows the panel state of that
+service, read from the panel with a short timeout (5 seconds, no
+retries) and cached per service for 90 seconds so a page reload does not
+hit the panel again:
+
+| Field | What it is |
+|---|---|
+| **Panel** | The panel entry this service is linked to. |
+| **Panel line ID** / **Panel username** | The line id and username on the panel. |
+| **Line status** | `Active`, `Expired` (past its panel expiry), `Disabled` (switched off on the panel) or `Blocked by panel` (blocked by the panel administration). A panel block wins over the switch. Rows written by older releases (`Active`, `Suspended`) keep working. |
+| **Active connections** | How many connections the line has open right now. |
+| **Panel expiry** / **WHMCS next due date** | The two dates, side by side. |
+| **Panel checked** | The time of the last successful read and whether it was `live` or `cached`. When the read fails the field says `Panel check: failed (<reason>) · showing data from <time>` and the page keeps working with the data already stored. |
+| **Last module action** | The last action this module ran on the service and when, for example a renewal or a sync. |
+| **Warning** | Only when there is something to fix: a date divergence (see below) or a field the panel ignored (for example an admin-only field sent with a reseller key). It is shown once. |
+
+When the WHMCS next due date and the panel expiry differ by more than a
+day, the Warning field says it and the four buttons below the tab are the
+way to align them. **Editing the next due date in WHMCS does not change
+the panel**, and the buttons are:
+
+- **Sync bouquets, notes & connections** pushes the current product's
+  bouquets, notes and connection count to the line. It does not renew the
+  line, does not spend credits and does not change the panel status or
+  expiry; it stores the status and expiry the panel answers with on the
+  service and leaves a summary in **Last module action**.
+- **Refresh from panel** forces the panel check instead of waiting for
+  the 90 second cache.
+- **Set panel expiry to WHMCS next due date** writes the WHMCS next due
+  date to the panel line. `exp_date` is an admin-only panel field, so
+  this button needs an **Admin** key on the panel entry; with a reseller
+  key it returns an error without calling the panel.
+- **Set WHMCS next due date to panel expiry** does the opposite and needs
+  no admin key.
+
+**Dates and time zones.** The panel expiry is a UTC timestamp and the
+WHMCS next due date is a plain date. The module works with whole days in
+UTC: when it pushes a WHMCS date to the panel it uses **12:00 UTC** of
+that day, and it only warns when the two dates differ by more than a
+day, so nothing drifts by one day depending on the time zone of the
+admin. Renewals still sync the WHMCS next due date to the
+panel expiry, and Renew does not ask the panel to extend a line twice
+inside the same billing cycle: the request carries an idempotency key
+built from the service, the panel expiry read before renewing and the
+package, so a double click or a WHMCS retry returns the panel's original
+answer. If the line was `Disabled` or `Blocked by panel` before the
+renewal, the renewal goes ahead (the panel enables the line again) and
+the fact is written to **Last module action** and to the module log.
 
 ## Provisioning modes
 
@@ -390,6 +460,7 @@ modules/
       Settings.php            mod_xtreamai_settings
       PanelStore.php          mod_xtreamai_panels (tokens encrypted)
       ServiceStore.php        mod_xtreamai_services
+      LineStatus.php          panel line status vocabulary
       PanelApi.php            facade over the panel API
       PanelHttpClient.php     lightweight API client
       Updater.php             release check and in-app update

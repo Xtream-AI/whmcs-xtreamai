@@ -155,7 +155,7 @@
                     var cls = 'xtai-status-badge--neutral';
                     if (s.indexOf('active') !== -1) {
                         cls = 'xtai-status-badge--success';
-                    } else if (s.indexOf('suspend') !== -1) {
+                    } else if (s.indexOf('suspend') !== -1 || s.indexOf('expired') !== -1 || s.indexOf('blocked') !== -1) {
                         cls = 'xtai-status-badge--warning';
                     }
                     badge.classList.add(cls);

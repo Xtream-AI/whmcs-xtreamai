@@ -194,10 +194,12 @@ final class PanelApi
 
         $body = [];
         $dropped = [];
+        $ignored = [];
         foreach ($fields as $key => $value) {
             if (in_array($key, $bothTypes, true)) {
                 if ($key === 'bouquets') {
                     if (!is_array($value)) {
+                        $ignored[] = $key;
                         continue;
                     }
                     $body['bouquets'] = array_values(array_map('intval', $value));
@@ -206,37 +208,48 @@ final class PanelApi
                 }
                 continue;
             }
-            if (in_array($key, $adminOnly, true)) {
-                if ($keyType !== 'admin') {
-                    $dropped[] = $key;
-                    continue;
-                }
-                switch ($key) {
-                    case 'package_id':
-                        $body['package_id'] = (int) $value;
-                        break;
-                    case 'max_connections':
-                        $body['max_connections'] = (int) $value;
-                        break;
-                    case 'exp_date':
-                        $body['exp_date'] = $value === null ? null : (int) $value;
-                        break;
-                    case 'is_restreamer':
-                    case 'is_isplock':
-                        $body[$key] = (bool) $value;
-                        break;
-                    case 'allowed_ips':
-                    case 'allowed_ua':
-                        if (is_array($value)) {
-                            $body[$key] = array_values(array_map('strval', $value));
-                        }
-                        break;
-                }
+            if (!in_array($key, $adminOnly, true)) {
+                $ignored[] = $key;
+                continue;
+            }
+            if ($keyType !== 'admin') {
+                $dropped[] = $key;
+                continue;
+            }
+            switch ($key) {
+                case 'package_id':
+                    $body['package_id'] = (int) $value;
+                    break;
+                case 'max_connections':
+                    $body['max_connections'] = (int) $value;
+                    break;
+                case 'exp_date':
+                    $body['exp_date'] = $value === null ? null : (int) $value;
+                    break;
+                case 'is_restreamer':
+                case 'is_isplock':
+                    $body[$key] = (bool) $value;
+                    break;
+                case 'allowed_ips':
+                case 'allowed_ua':
+                    if (is_array($value)) {
+                        $body[$key] = array_values(array_map('strval', $value));
+                    } else {
+                        $ignored[] = $key;
+                    }
+                    break;
             }
         }
 
+        $warnings = [];
         if ($dropped !== []) {
-            Settings::set('last_update_warning', 'Dropped admin-only fields on reseller key: ' . implode(',', $dropped));
+            $warnings[] = 'Dropped admin-only fields on reseller key: ' . implode(',', $dropped);
+        }
+        if ($ignored !== []) {
+            $warnings[] = 'Ignored unsupported fields: ' . implode(',', $ignored);
+        }
+        if ($warnings !== []) {
+            Settings::set('last_update_warning', implode('. ', $warnings));
         }
 
         if ($body === []) {
@@ -276,9 +289,14 @@ final class PanelApi
 
     
 
-    public static function renewLine(int $panelId, string $lineId, int $packageId, ?array $bouquets = null): array
-    {
-        return self::withClient($panelId, static function (PanelHttpClient $client) use ($lineId, $packageId, $bouquets): array {
+    public static function renewLine(
+        int $panelId,
+        string $lineId,
+        int $packageId,
+        ?array $bouquets = null,
+        ?string $idempotencyKey = null
+    ): array {
+        return self::withClient($panelId, static function (PanelHttpClient $client) use ($lineId, $packageId, $bouquets, $idempotencyKey): array {
             $body = ['package_id' => $packageId];
             if ($bouquets !== null) {
                 $body['bouquets'] = array_values(array_map('intval', $bouquets));
@@ -288,7 +306,8 @@ final class PanelApi
                 'POST',
                 '/panel-api/v1/lines/' . (int) $lineId . '/renew',
                 null,
-                $body
+                $body,
+                $idempotencyKey
             );
 
             return [
@@ -300,7 +319,7 @@ final class PanelApi
 
     
 
-    public static function getLine(int $panelId, string $lineId): array
+    public static function getLine(int $panelId, string $lineId, bool $quick = false): array
     {
         return self::withClient($panelId, static function (PanelHttpClient $client) use ($lineId): array {
             $line = $client->request('GET', '/panel-api/v1/lines/' . (int) $lineId);
@@ -310,11 +329,15 @@ final class PanelApi
                 'username' => (string) self::value($line, 'username', ''),
                 'password' => (string) self::value($line, 'password', ''),
                 'enabled' => (bool) self::value($line, 'enabled', false),
+                'admin_enabled' => (bool) self::value($line, 'admin_enabled', true),
+                'is_trial' => (bool) self::value($line, 'is_trial', false),
+                'max_connections' => (int) self::value($line, 'max_connections', 0),
+                'exp_date' => self::nullableInt($line, 'exp_date'),
                 'expires_at' => self::expiryFrom($line),
                 'notes' => (string) self::value($line, 'notes', ''),
                 'email' => (string) self::value($line, 'email', ''),
             ];
-        });
+        }, $quick);
     }
 
     
@@ -580,7 +603,7 @@ final class PanelApi
 
     
 
-    public static function lineConnections(int $panelId, string $lineId): array
+    public static function lineConnections(int $panelId, string $lineId, bool $quick = false): array
     {
         return self::withClient($panelId, static function (PanelHttpClient $client) use ($lineId): array {
             $out = [];
@@ -597,7 +620,7 @@ final class PanelApi
             }
 
             return $out;
-        });
+        }, $quick);
     }
 
     
@@ -737,7 +760,7 @@ final class PanelApi
 
     
 
-    private static function buildClient(int $panelId): array
+    private static function buildClient(int $panelId, bool $quick = false): array
     {
         $panel = PanelStore::find($panelId);
 
@@ -760,16 +783,18 @@ final class PanelApi
         }
 
         $verifySsl = (int) ($panel->verify_ssl ?? 1) !== 0;
-        $client = new PanelHttpClient($baseUrl, $token, $verifySsl);
+        $client = $quick
+            ? PanelHttpClient::quick($baseUrl, $token, $verifySsl)
+            : new PanelHttpClient($baseUrl, $token, $verifySsl);
 
         return [$client, $token];
     }
 
     
 
-    private static function withClient(int $panelId, callable $callback)
+    private static function withClient(int $panelId, callable $callback, bool $quick = false)
     {
-        list($client, $token) = self::buildClient($panelId);
+        list($client, $token) = self::buildClient($panelId, $quick);
 
         try {
             return $callback($client);

@@ -842,34 +842,216 @@ function xtreamai_updateNextDueDate(int $serviceId, array $line, array $params):
     Capsule::table('tblhosting')->where('id', $serviceId)->update(['nextduedate' => $expiry]);
 }
 
-function xtreamai_refreshFromPanel(array $params): ?array
+function xtreamai_serviceNextDueDate(int $serviceId): string
 {
+    if ($serviceId < 1) {
+        return '';
+    }
+
+    try {
+        $hosting = Capsule::table('tblhosting')->where('id', $serviceId)->first();
+    } catch (\Throwable $e) {
+        return '';
+    }
+
+    if (!$hosting || empty($hosting->nextduedate)) {
+        return '';
+    }
+
+    $value = trim((string) $hosting->nextduedate);
+    if ($value === '' || strpos($value, '0000-00-00') === 0) {
+        return '';
+    }
+
+    return $value;
+}
+
+function xtreamai_dateTimestamp(string $value, int $hour = 0): ?int
+{
+    $raw = trim($value);
+    if ($raw === '' || strpos($raw, '0000-00-00') === 0) {
+        return null;
+    }
+
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $raw, $matches) === 1) {
+        $clock = str_pad((string) xtreamai_clamp($hour, 0, 23), 2, '0', STR_PAD_LEFT) . ':00:00 UTC';
+        $timestamp = strtotime($matches[1] . '-' . $matches[2] . '-' . $matches[3] . ' ' . $clock);
+
+        return $timestamp === false ? null : (int) $timestamp;
+    }
+
+    $timestamp = strtotime($raw);
+
+    return $timestamp === false ? null : (int) $timestamp;
+}
+
+function xtreamai_expiryDivergence(string $nextDue, string $panelExpiry): string
+{
+    $dueTs = xtreamai_dateTimestamp($nextDue);
+    $panelTs = xtreamai_dateTimestamp($panelExpiry);
+    if ($dueTs === null || $panelTs === null) {
+        return '';
+    }
+    if (abs($panelTs - $dueTs) <= 86400) {
+        return '';
+    }
+
+    return 'WHMCS next due date is ' . xtreamai_formatDate($nextDue)
+        . ', the panel line expires ' . xtreamai_formatDate($panelExpiry)
+        . '. Editing the next due date in WHMCS does not change the panel; use the buttons below.';
+}
+
+function xtreamai_shortError(string $message, int $limit = 120): string
+{
+    $clean = preg_replace('/\s+/', ' ', trim($message));
+    if (!is_string($clean) || $clean === '') {
+        return 'unknown error';
+    }
+    if (strlen($clean) > $limit) {
+        $clean = rtrim(substr($clean, 0, $limit - 3)) . '...';
+    }
+
+    return $clean;
+}
+
+function xtreamai_clock(string $value): string
+{
+    $ts = strtotime(trim($value));
+    if ($ts === false || $ts === 0) {
+        return '';
+    }
+
+    return date('Y-m-d', $ts) === date('Y-m-d') ? date('H:i', $ts) : date('d/m/Y H:i', $ts);
+}
+
+function xtreamai_panelCheckLabel(array $check, $row): string
+{
+    $source = (string) ($check['source'] ?? '');
+
+    if ($source === 'live' || $source === 'cached') {
+        $stamp = !empty($check['checked_at']) ? (string) $check['checked_at'] : (string) ($row->updated_at ?? '');
+        $time = xtreamai_clock($stamp);
+
+        return ($time !== '' ? $time . ' · ' : '') . $source;
+    }
+
+    if ($source === 'unlinked') {
+        return 'Not linked yet';
+    }
+
+    if ($source === 'not_applicable') {
+        return 'Not applicable to Sub-Reseller accounts';
+    }
+
+    $reason = (string) ($check['error'] ?? '');
+    if ($reason === '') {
+        $reason = 'unknown error';
+    }
+
+    $stamp = !empty($row->panel_checked_at) ? (string) $row->panel_checked_at : (string) ($row->updated_at ?? '');
+    $time = xtreamai_clock($stamp);
+
+    return $time === ''
+        ? 'Panel check: failed (' . $reason . ') · showing the local record'
+        : 'Panel check: failed (' . $reason . ') · showing data from ' . $time;
+}
+
+function xtreamai_lastActionLabel($row): string
+{
+    $action = trim((string) ($row->last_action ?? ''));
+    if ($action === '') {
+        return 'None yet';
+    }
+
+    $time = xtreamai_clock((string) ($row->last_action_at ?? ''));
+
+    return $time === '' ? $action : $action . ' · ' . $time;
+}
+
+function xtreamai_panelSummary(array $line, string $status): string
+{
+    $summary = 'Panel check: ' . ($status !== '' ? $status : 'unknown');
+    if (!empty($line['expires_at'])) {
+        $summary .= ', expires ' . xtreamai_formatDate((string) $line['expires_at']);
+    }
+
+    return $summary;
+}
+
+function xtreamai_refreshFromPanel(array $params, bool $force = false): array
+{
+    $out = [
+        'line' => null,
+        'source' => 'failed',
+        'status' => '',
+        'checked_at' => null,
+        'error' => '',
+    ];
+
     try {
         xtreamai_requireAddon();
         \WhmcsXtreamAI\Settings::ensureTables();
 
         $serviceId = (int) ($params['serviceid'] ?? 0);
         if ($serviceId < 1) {
-            return null;
+            $out['source'] = 'invalid';
+            $out['error'] = 'No service id.';
+
+            return $out;
+        }
+
+        if (xtreamai_accountType($params) === 'reseller') {
+            $out['source'] = 'not_applicable';
+            $out['error'] = 'Sub-Reseller product: no panel line to read.';
+
+            return $out;
+        }
+
+        $row = \WhmcsXtreamAI\ServiceStore::find($serviceId);
+        if (!$row || empty($row->panel_account_id)) {
+            $out['source'] = 'unlinked';
+            $out['error'] = 'Not linked to a panel line yet.';
+
+            return $out;
+        }
+
+        $checkedAt = !empty($row->panel_checked_at) ? (string) $row->panel_checked_at : '';
+        $checkedTs = $checkedAt === '' ? 0 : (int) strtotime($checkedAt);
+        if (!$force && $checkedTs > 0 && (time() - $checkedTs) < 90) {
+            $out['source'] = 'cached';
+            $out['status'] = (string) $row->status;
+            $out['checked_at'] = $checkedAt;
+
+            return $out;
         }
 
         $panelId = xtreamai_requirePanelId($params);
-        $lineId = xtreamai_lineIdForService($params);
-        $line = \WhmcsXtreamAI\PanelApi::getLine($panelId, $lineId);
+        $line = \WhmcsXtreamAI\PanelApi::getLine($panelId, (string) $row->panel_account_id, true);
         if (!$line || empty($line['id'])) {
-            return null;
+            $out['error'] = 'The panel did not return this line.';
+
+            return $out;
         }
 
-        $status = !empty($line['enabled']) ? 'Active' : 'Suspended';
+        $status = \WhmcsXtreamAI\LineStatus::fromPanel($line);
         \WhmcsXtreamAI\ServiceStore::updateStatus(
             $serviceId,
             $status,
             isset($line['expires_at']) ? (string) $line['expires_at'] : null
         );
+        \WhmcsXtreamAI\ServiceStore::recordPanelCheck($serviceId);
 
-        return $line;
+        $out['line'] = $line;
+        $out['source'] = 'live';
+        $out['status'] = $status;
+        $out['checked_at'] = date('Y-m-d H:i:s');
+
+        return $out;
     } catch (\Throwable $e) {
-        return null;
+        $out['source'] = 'failed';
+        $out['error'] = xtreamai_shortError($e->getMessage());
+
+        return $out;
     }
 }
 
@@ -1080,6 +1262,7 @@ function xtreamai_TerminateAccount(array $params)
 function xtreamai_Renew(array $params)
 {
     return xtreamai_execute($params, 'renew', static function (array $params): string {
+        $serviceId = (int) ($params['serviceid'] ?? 0);
         $panelId = xtreamai_requirePanelId($params);
         $lineId = xtreamai_lineIdForService($params);
 
@@ -1090,18 +1273,33 @@ function xtreamai_Renew(array $params)
                     $panelId,
                     $lineId,
                     $credits,
-                    'WHMCS renewal service #' . (int) ($params['serviceid'] ?? 0)
+                    'WHMCS renewal service #' . $serviceId
                 );
             }
-            \WhmcsXtreamAI\ServiceStore::updateStatus((int) ($params['serviceid'] ?? 0), 'Active');
+            \WhmcsXtreamAI\ServiceStore::updateStatus($serviceId, 'Active');
             return 'success';
         }
 
         $packageId = xtreamai_packageIdForService($params);
         if ($packageId < 1) {
-            throw new \RuntimeException('No package selected for renewal.');
+            throw new \RuntimeException(
+                'No package selected for service #' . $serviceId
+                . ' (product "' . (string) ($params['productname'] ?? '') . '"):'
+                . ' set the package in the product\'s Module Settings.'
+            );
         }
-        $result = \WhmcsXtreamAI\PanelApi::renewLine($panelId, $lineId, $packageId);
+
+        $before = [];
+        try {
+            $before = \WhmcsXtreamAI\PanelApi::getLine($panelId, $lineId);
+        } catch (\Throwable $e) {
+            $before = [];
+        }
+
+        $panelExpiryBefore = isset($before['exp_date']) ? (int) $before['exp_date'] : 0;
+        $idempotencyKey = hash('sha256', 'whmcs-renew|' . $serviceId . '|' . $panelExpiryBefore . '|' . $packageId);
+
+        $result = \WhmcsXtreamAI\PanelApi::renewLine($panelId, $lineId, $packageId, null, $idempotencyKey);
 
         try {
             $maxConn = \WhmcsXtreamAI\PanelApi::keyType($panelId) === 'admin'
@@ -1120,11 +1318,33 @@ function xtreamai_Renew(array $params)
         }
 
         \WhmcsXtreamAI\ServiceStore::updateStatus(
-            (int) ($params['serviceid'] ?? 0),
+            $serviceId,
             'Active',
             isset($result['expires_at']) ? (string) $result['expires_at'] : null
         );
-        xtreamai_updateNextDueDate((int) ($params['serviceid'] ?? 0), $result, $params);
+        xtreamai_updateNextDueDate($serviceId, $result, $params);
+
+        $action = 'Renewed: '
+            . (!empty($before['expires_at']) ? xtreamai_formatDate((string) $before['expires_at']) : 'unknown')
+            . ' -> '
+            . (!empty($result['expires_at']) ? xtreamai_formatDate((string) $result['expires_at']) : 'unknown')
+            . ' (package #' . $packageId . ')';
+
+        if ($before !== []) {
+            $statusBefore = \WhmcsXtreamAI\LineStatus::fromPanel($before);
+            if ($statusBefore === \WhmcsXtreamAI\LineStatus::DISABLED || $statusBefore === \WhmcsXtreamAI\LineStatus::BLOCKED) {
+                $action .= ' · line was ' . $statusBefore . ' and the panel enabled it again';
+                xtreamai_logModuleCall(
+                    'renew_state',
+                    xtreamai_logRequestSummary('renew_state', $params),
+                    'Line was ' . $statusBefore . ' before the renewal; the panel enables the line again on renew.',
+                    'info'
+                );
+            }
+        }
+
+        \WhmcsXtreamAI\ServiceStore::recordAction($serviceId, $action);
+
         return 'success';
     });
 }
@@ -1151,7 +1371,12 @@ function xtreamai_AdminCustomButtonArray(array $params)
     if (xtreamai_accountType($params) === 'reseller') {
         return [];
     }
-    return ['Sync line to panel' => 'sync'];
+    return [
+        'Sync bouquets, notes & connections' => 'sync',
+        'Refresh from panel' => 'refresh',
+        'Set panel expiry to WHMCS next due date' => 'push_expiry',
+        'Set WHMCS next due date to panel expiry' => 'pull_expiry',
+    ];
 }
 
 function xtreamai_sync(array $params)
@@ -1160,6 +1385,7 @@ function xtreamai_sync(array $params)
         if (xtreamai_accountType($params) === 'reseller') {
             throw new \RuntimeException('Sync is not supported for Sub-Reseller products.');
         }
+        $serviceId = (int) ($params['serviceid'] ?? 0);
         $panelId = xtreamai_requirePanelId($params);
         $lineId = xtreamai_lineIdForService($params);
         $bouquets = xtreamai_selectedBouquets($params);
@@ -1167,14 +1393,127 @@ function xtreamai_sync(array $params)
         $maxConn = xtreamai_maxConnectionsForService($params, $panelId, xtreamai_currentPackageIdForService($params));
 
         $fields = ['notes' => $notes];
+        $parts = ['notes'];
         if ($bouquets !== []) {
             $fields['bouquets'] = $bouquets;
+            $parts[] = 'bouquets (' . count($bouquets) . ')';
         }
         if ($maxConn > 0) {
             $fields['max_connections'] = $maxConn;
+            $parts[] = 'connections=' . $maxConn;
         }
 
-        \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
+        $line = \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
+        $summary = 'Synced ' . implode(', ', $parts);
+
+        if (is_array($line) && !empty($line['id'])) {
+            \WhmcsXtreamAI\ServiceStore::updateFromLine($serviceId, $line);
+            $summary .= ' · panel: ' . \WhmcsXtreamAI\LineStatus::fromPanel($line);
+            if (!empty($line['expires_at'])) {
+                $summary .= ', expires ' . xtreamai_formatDate((string) $line['expires_at']);
+            }
+        }
+
+        \WhmcsXtreamAI\ServiceStore::recordAction($serviceId, $summary);
+
+        return 'success';
+    });
+}
+
+function xtreamai_refresh(array $params)
+{
+    return xtreamai_execute($params, 'refresh', static function (array $params): string {
+        if (xtreamai_accountType($params) === 'reseller') {
+            throw new \RuntimeException('Refresh from panel is not supported for Sub-Reseller products.');
+        }
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        $check = xtreamai_refreshFromPanel($params, true);
+
+        if ((string) ($check['source'] ?? '') !== 'live') {
+            $reason = (string) ($check['error'] ?? '');
+            if ($reason === '') {
+                $reason = 'unknown error';
+            }
+            \WhmcsXtreamAI\ServiceStore::recordAction($serviceId, 'Panel check failed: ' . $reason);
+
+            throw new \RuntimeException('Panel check failed: ' . $reason);
+        }
+
+        $line = isset($check['line']) && is_array($check['line']) ? $check['line'] : [];
+        \WhmcsXtreamAI\ServiceStore::recordAction($serviceId, xtreamai_panelSummary($line, (string) ($check['status'] ?? '')));
+
+        return 'success';
+    });
+}
+
+function xtreamai_push_expiry(array $params)
+{
+    return xtreamai_execute($params, 'push_expiry', static function (array $params): string {
+        if (xtreamai_accountType($params) === 'reseller') {
+            throw new \RuntimeException('Setting the panel expiry is not supported for Sub-Reseller products.');
+        }
+
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        $panelId = xtreamai_requirePanelId($params);
+
+        if (\WhmcsXtreamAI\PanelApi::keyType($panelId) !== 'admin') {
+            throw new \RuntimeException(
+                'Setting the panel expiry requires an admin panel key.'
+                . ' Renew the service, or change the expiry on the panel and use Set WHMCS next due date to panel expiry.'
+            );
+        }
+
+        $nextDue = xtreamai_serviceNextDueDate($serviceId);
+        if ($nextDue === '') {
+            throw new \RuntimeException('This service has no next due date in WHMCS to copy to the panel.');
+        }
+
+        $epoch = xtreamai_dateTimestamp($nextDue, 12);
+        if ($epoch === null) {
+            throw new \RuntimeException('The next due date of this service is not a valid date.');
+        }
+
+        $lineId = xtreamai_lineIdForService($params);
+        \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, ['exp_date' => $epoch]);
+        \WhmcsXtreamAI\ServiceStore::invalidatePanelCheck($serviceId);
+
+        $action = 'Panel expiry set to ' . xtreamai_formatDate($nextDue) . ' from the WHMCS next due date';
+        \WhmcsXtreamAI\ServiceStore::recordAction($serviceId, $action);
+        xtreamai_logModuleCall('push_expiry', xtreamai_logRequestSummary('push_expiry', $params), $action, 'success');
+
+        return 'success';
+    });
+}
+
+function xtreamai_pull_expiry(array $params)
+{
+    return xtreamai_execute($params, 'pull_expiry', static function (array $params): string {
+        if (xtreamai_accountType($params) === 'reseller') {
+            throw new \RuntimeException('Copying the panel expiry is not supported for Sub-Reseller products.');
+        }
+        if (xtreamai_hidesNextDueDate((string) ($params['billingcycle'] ?? ''))) {
+            throw new \RuntimeException('This product has a one-time or free billing cycle: WHMCS keeps no next due date to set.');
+        }
+
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        $panelId = xtreamai_requirePanelId($params);
+        $lineId = xtreamai_lineIdForService($params);
+        $line = \WhmcsXtreamAI\PanelApi::getLine($panelId, $lineId);
+        if (!$line || empty($line['id'])) {
+            throw new \RuntimeException('The panel did not return this line.');
+        }
+
+        $expiry = xtreamai_expiryDate($line);
+        if ($expiry === '') {
+            throw new \RuntimeException('The panel line has no expiry date to copy to WHMCS.');
+        }
+
+        xtreamai_updateNextDueDate($serviceId, $line, $params);
+        \WhmcsXtreamAI\ServiceStore::invalidatePanelCheck($serviceId);
+
+        $action = 'WHMCS next due date set to ' . xtreamai_formatDate($expiry) . ' from the panel expiry';
+        \WhmcsXtreamAI\ServiceStore::recordAction($serviceId, $action);
+
         return 'success';
     });
 }
@@ -1257,7 +1596,9 @@ function xtreamai_AdminServicesTabFields(array $params)
 
         $row = \WhmcsXtreamAI\ServiceStore::find($serviceId);
         if (!$row) {
-            return [];
+            return [
+                'Panel line' => xtreamai_esc('Not linked yet. Provision the service or use Bulk tools > Link existing services.'),
+            ];
         }
 
         $panelName = '';
@@ -1268,7 +1609,27 @@ function xtreamai_AdminServicesTabFields(array $params)
             }
         }
 
-        $expiry = !empty($row->expires_at) ? xtreamai_formatDate((string) $row->expires_at) : '—';
+        $check = xtreamai_refreshFromPanel($params);
+        $line = isset($check['line']) && is_array($check['line']) ? $check['line'] : [];
+
+        $stored = \WhmcsXtreamAI\ServiceStore::find($serviceId);
+        if (!$stored) {
+            return [];
+        }
+        $row = $stored;
+
+        $status = (string) ($check['status'] !== '' ? $check['status'] : $row->status);
+
+        $expiryRaw = '';
+        if (!empty($line['expires_at'])) {
+            $expiryRaw = (string) $line['expires_at'];
+        } elseif (!empty($row->expires_at)) {
+            $expiryRaw = (string) $row->expires_at;
+        }
+        $expiry = $expiryRaw !== '' ? xtreamai_formatDate($expiryRaw) : '-';
+
+        $nextDueRaw = xtreamai_serviceNextDueDate($serviceId);
+        $nextDue = $nextDueRaw !== '' ? xtreamai_formatDate($nextDueRaw) : '-';
 
         $activeConnections = '-';
         if (xtreamai_accountType($params) === 'line'
@@ -1279,7 +1640,8 @@ function xtreamai_AdminServicesTabFields(array $params)
                 $activeConnections = (string) count(
                     \WhmcsXtreamAI\PanelApi::lineConnections(
                         (int) $row->panel_id,
-                        (string) $row->panel_account_id
+                        (string) $row->panel_account_id,
+                        true
                     )
                 );
             } catch (\Throwable $e) {
@@ -1287,13 +1649,35 @@ function xtreamai_AdminServicesTabFields(array $params)
             }
         }
 
-        return [
+        $warnings = [];
+        $divergence = xtreamai_expiryDivergence($nextDueRaw, $expiryRaw);
+        if ($divergence !== '') {
+            $warnings[] = $divergence;
+        }
+
+        $updateWarning = trim((string) \WhmcsXtreamAI\Settings::get('last_update_warning', ''));
+        if ($updateWarning !== '') {
+            $warnings[] = $updateWarning;
+            \WhmcsXtreamAI\Settings::set('last_update_warning', '');
+        }
+
+        $fields = [
             'Panel' => xtreamai_esc($panelName !== '' ? $panelName : (string) $row->panel_id),
-            'Line ID' => xtreamai_esc((string) $row->panel_account_id),
-            'Line Status' => xtreamai_esc((string) $row->status),
-            'Active Connections' => xtreamai_esc($activeConnections),
-            'Panel Expiry' => xtreamai_esc($expiry),
+            'Panel line ID' => xtreamai_esc((string) $row->panel_account_id),
+            'Panel username' => xtreamai_esc((string) $row->username),
+            'Line status' => xtreamai_esc($status),
+            'Active connections' => xtreamai_esc($activeConnections),
+            'Panel expiry' => xtreamai_esc($expiry),
+            'WHMCS next due date' => xtreamai_esc($nextDue),
+            'Panel checked' => xtreamai_esc(xtreamai_panelCheckLabel($check, $row)),
+            'Last module action' => xtreamai_esc(xtreamai_lastActionLabel($row)),
         ];
+
+        if ($warnings !== []) {
+            $fields['Warning'] = xtreamai_esc(implode(' ', $warnings));
+        }
+
+        return $fields;
     } catch (\Throwable $e) {
         return [];
     }
@@ -1368,7 +1752,8 @@ function xtreamai_ClientArea(array $params)
             try {
                 $connections = \WhmcsXtreamAI\PanelApi::lineConnections(
                     (int) $row->panel_id,
-                    (string) $row->panel_account_id
+                    (string) $row->panel_account_id,
+                    true
                 );
                 foreach ($connections as $index => $connection) {
                     $connections[$index]['duration'] = xtreamai_formatDuration(

@@ -7,7 +7,9 @@ namespace WhmcsXtreamAI;
 final class PanelHttpClient
 {
     private const USER_AGENT = 'whmcs-xtreamai';
-    private const VERSION = '1.5.4';
+    private const VERSION = '1.6.0';
+    private const QUICK_TIMEOUT = 5.0;
+    private const QUICK_RETRIES = 0;
 
     
     private $baseUrl;
@@ -36,6 +38,11 @@ final class PanelHttpClient
         $this->verifySsl = $verifySsl;
         $this->timeout = $timeout;
         $this->maxRetries = $maxRetries;
+    }
+
+    public static function quick(string $baseUrl, string $token, bool $verifySsl = true): self
+    {
+        return new self($baseUrl, $token, $verifySsl, self::QUICK_TIMEOUT, self::QUICK_RETRIES);
     }
 
     

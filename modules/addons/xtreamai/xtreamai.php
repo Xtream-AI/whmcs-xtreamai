@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.5.4',
+        'version'     => '1.6.0',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -810,6 +810,7 @@ function xtreamai_ajax_bulk_sync()
         $counts  = [];
         $results = [];
         $lastId  = $afterId;
+        $done    = count($rows) < $batchSize;
 
         foreach ($rows as $row) {
             $serviceId = (int) $row->service_id;
@@ -853,16 +854,55 @@ function xtreamai_ajax_bulk_sync()
             ];
         }
 
+        $skippedSuspended = $includeAll
+            ? 0
+            : xtreamai_bulk_skipped_suspended($panelId, $afterId, $lastId, $done, $workers, $worker);
+        if ($skippedSuspended > 0) {
+            $counts['skipped_suspended'] = ($counts['skipped_suspended'] ?? 0) + $skippedSuspended;
+        }
+
         xtreamai_json([
-            'ok'        => true,
-            'done'      => count($rows) < $batchSize,
-            'next'      => $lastId,
-            'processed' => count($results),
-            'counts'    => $counts,
-            'rows'      => $results,
+            'ok'                => true,
+            'done'              => $done,
+            'next'              => $lastId,
+            'processed'         => count($results),
+            'skipped_suspended' => $skippedSuspended,
+            'counts'            => $counts,
+            'rows'              => $results,
         ]);
     } catch (\Throwable $e) {
         xtreamai_json(['ok' => false, 'done' => true, 'message' => xtreamai_safe_message($e)]);
+    }
+}
+
+function xtreamai_bulk_skipped_suspended(
+    int $panelId,
+    int $afterId,
+    int $lastId,
+    bool $done,
+    int $workers,
+    int $worker
+): int {
+    try {
+        $query = \WHMCS\Database\Capsule::table('mod_xtreamai_services')
+            ->join('tblhosting', 'tblhosting.id', '=', 'mod_xtreamai_services.service_id')
+            ->join('tblproducts', 'tblproducts.id', '=', 'tblhosting.packageid')
+            ->where('mod_xtreamai_services.panel_id', $panelId)
+            ->where('mod_xtreamai_services.panel_account_id', '<>', '')
+            ->where('tblproducts.servertype', 'xtreamai')
+            ->where('tblhosting.domainstatus', 'Suspended')
+            ->where('mod_xtreamai_services.service_id', '>', $afterId);
+
+        if (!$done) {
+            $query->where('mod_xtreamai_services.service_id', '<=', $lastId);
+        }
+        if ($workers > 1) {
+            $query->whereRaw('MOD(mod_xtreamai_services.service_id, ?) = ?', [$workers, $worker]);
+        }
+
+        return (int) $query->count();
+    } catch (\Throwable $e) {
+        return 0;
     }
 }
 
@@ -1813,14 +1853,12 @@ JS;
                     . '<tbody>';
                 foreach ($lines as $row) {
                     $lusername = $h((string) ($row['username'] ?? ''));
-                    $lenabled  = !empty($row['enabled']);
                     $ltrial    = !empty($row['is_trial']);
                     $lmax      = (string) ($row['max_connections'] ?? '');
                     $lexpires  = $h((string) ($row['expires_at'] ?? ''));
 
-                    $statusHtml = $lenabled
-                        ? '<span class="xtai-badge xtai-badge--success">Active</span>'
-                        : '<span class="xtai-badge xtai-badge--neutral">Disabled</span>';
+                    $lstatus    = \WhmcsXtreamAI\LineStatus::fromPanel($row);
+                    $statusHtml = '<span class="xtai-badge ' . \WhmcsXtreamAI\LineStatus::badgeClass($lstatus) . '">' . $h($lstatus) . '</span>';
 
                     $trialHtml = $ltrial
                         ? '<span class="xtai-badge xtai-badge--warning">Trial</span>'
@@ -1914,7 +1952,7 @@ JS;
             echo xtreamai_bulk_card(
                 'sync',
                 '3. Sync all services',
-                'Runs the same line sync as the Sync line to panel button on every linked service of the panel: bouquets, notes and connection count are recalculated from each product, including the extra_connections configurable option.',
+                'Runs the same line sync as the Sync bouquets, notes & connections button on every linked service of the panel: bouquets, notes and connection count are recalculated from each product, including the extra_connections configurable option. Services that are Suspended in WHMCS are left out unless you tick Include Suspended services, and each batch reports how many were skipped for that reason.',
                 'Sync services',
                 'Include Suspended services',
                 'Parallel requests',
@@ -1938,7 +1976,7 @@ JS;
     var outcomes = {
         index: ['indexed', 'total'],
         link: ['linked_by_tag', 'linked_by_username', 'not_found', 'ambiguous_tag', 'skipped_sub_reseller', 'skipped_other_panel', 'error'],
-        sync: ['synced', 'skipped_sub_reseller', 'error']
+        sync: ['synced', 'skipped_suspended', 'skipped_sub_reseller', 'error']
     };
     var labels = {
         indexed: 'Lines indexed',
@@ -1949,6 +1987,7 @@ JS;
         ambiguous_tag: 'Ambiguous tag',
         skipped_sub_reseller: 'Sub-Reseller skipped',
         skipped_other_panel: 'Other panel skipped',
+        skipped_suspended: 'Skipped (Suspended)',
         error: 'Errors',
         synced: 'Synced'
     };
@@ -2000,6 +2039,34 @@ JS;
             window.localStorage.removeItem(resumeKey(op));
         } catch (e) {
             return;
+        }
+    }
+
+    function includeKey(op) {
+        return 'xtai_bulk_include:' + op;
+    }
+
+    function bindInclude(box) {
+        var op = String(box.getAttribute('data-op') || '');
+        if (op === '') { return; }
+        try {
+            box.checked = window.localStorage.getItem(includeKey(op)) === '1';
+        } catch (e) {
+            box.checked = false;
+        }
+        box.addEventListener('change', function () {
+            try {
+                window.localStorage.setItem(includeKey(op), box.checked ? '1' : '0');
+            } catch (e) {
+                return;
+            }
+        });
+    }
+
+    function restoreInclude() {
+        var boxes = document.querySelectorAll('.xtai-bulk-include');
+        for (var i = 0; i < boxes.length; i++) {
+            bindInclude(boxes[i]);
         }
     }
 
@@ -2478,6 +2545,7 @@ JS;
     }
 
     restoreResume();
+    restoreInclude();
 
     var runButtons = document.querySelectorAll('.xtai-bulk-run');
     for (var i = 0; i < runButtons.length; i++) {
@@ -2999,7 +3067,7 @@ function xtreamai_bulk_card(
 
     if ($includeLabel !== '') {
         $html .= '<label class="xtai-switch">'
-            . '<input type="checkbox" class="xtai-bulk-include" value="1">'
+            . '<input type="checkbox" class="xtai-bulk-include" data-op="' . $op . '" value="1">'
             . '<span class="xtai-switch__track"></span>'
             . '<span class="xtai-switch__label">' . $h($includeLabel) . '</span>'
             . '</label>';
