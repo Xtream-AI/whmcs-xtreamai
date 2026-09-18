@@ -259,7 +259,7 @@ In both cases WHMCS still marks the service as suspended or active (invoices, au
 
 ## 9. Bulk tools
 
-The **Bulk tools** tab (**Addons → Xtream AI Panel → Bulk tools**) does three jobs that would otherwise mean editing services one by one. They run in batches in your browser (100 lines per request when indexing, 100 services when linking, 5 when syncing, because each sync is one call to the panel) and show a progress bar, a counter for each result and one row per service. They are safe to run again: nothing is ever duplicated and nothing is deleted from the panel. If a run stops halfway (the panel went away, the browser tab was closed), just run it again: indexing starts over from scratch, and linking refuses to run until the index has been completed once.
+The **Bulk tools** tab (**Addons → Xtream AI Panel → Bulk tools**) does four jobs that would otherwise mean editing services one by one. They run in batches in your browser (100 lines per request when indexing, 100 services when linking, 5 when syncing or aligning expiries, because each service is one call to the panel) and show a progress bar, a counter for each result and one row per service. They are safe to run again: nothing is ever duplicated and nothing is deleted from the panel. If a run stops halfway (the panel went away, the browser tab was closed), just run it again: indexing starts over from scratch, and linking refuses to run until the index has been completed once.
 
 A run that stops keeps its position in the browser, so it can be resumed after reloading the page or even after logging in again: open **Bulk tools** on the same panel, click the same button and the run carries on from the last service it did. While a run is active the page also refreshes the WHMCS security token every four minutes, which keeps your admin session alive during the long runs.
 
@@ -273,7 +273,7 @@ This reads the lines that already exist on the panel and keeps a local copy of t
 2. In the first card, click **Index lines**.
 3. Wait for the progress bar to finish. The counters tell you how many lines were read and how many are in the local index now.
 
-Run this before the other two tools. It only reads from the panel, so it changes nothing there. If you run it again, the index of that panel is rebuilt from scratch.
+Run this before the other tools. It only reads from the panel, so it changes nothing there. If you run it again, the index of that panel is rebuilt from scratch.
 
 ### 9.2 Link existing services
 
@@ -310,6 +310,27 @@ This runs the same action as the **Sync bouquets, notes & connections** button o
 
 The progress bar tells you **how many requests are running and how many services have been processed**, for example "3 workers, 120 services processed", and the counters and the results table collect the outcome of all of them. If one request fails after its retries the run stops with an error, and the message names the last service already done in each request. Clicking **Sync services** again with the **same** number in **Parallel requests** resumes every request where it stopped, without syncing a service twice. If you change the number, the next run starts from the beginning: the shares are calculated from that number, so they would not match the previous run, and the progress bar says so.
 
+### 9.4 Align panel expiry to WHMCS
+
+This runs the same action as the **Set panel expiry to WHMCS next due date** button on each service, but for all of them at once: the expiry of every linked line of the panel is set to the next due date of its service in WHMCS, at **12:00 UTC** of that day. The panel only accepts the expiry with an **Admin** key, so if the panel entry uses a Reseller key the run stops before the first service, tells you so and nothing is sent to the panel.
+
+1. Choose the panel.
+2. Tick **Include Suspended services** if suspended services should be aligned too. Without it those services are skipped and the counter **Skipped (Suspended)** tells you how many were left out in each batch.
+3. Set **Parallel requests** (1 to 4, 3 by default) in the same row, as in the previous card: how many services are updated at the same time. Keep the same value to resume a run that stopped.
+4. Click **Align expiry dates**.
+
+For every service you get one row with the service id, the client, the username and the outcome:
+
+| Outcome | What it means |
+|---|---|
+| `aligned` | The expiry of the panel line was set to the WHMCS next due date. The message shows the date. |
+| `skipped_no_due_date` | The service has no next due date in WHMCS (empty or `0000-00-00`), so there is nothing to copy. The service was not touched. |
+| `skipped_suspended` | The service is Suspended in WHMCS and **Include Suspended services** was not ticked. |
+| `skipped_sub_reseller` | The product is a Sub-Reseller product: there is no line expiry to set. |
+| `error` | The module refused or failed for that service. The message column explains what, for example a next due date it could not use or a line it could not find. |
+
+**Warning:** this overwrites the expiry of **every linked active line** of the selected panel with the next due date WHMCS has for that service. If a date is wrong in WHMCS, the panel line will be wrong too. Before a run over many services, press **Refresh from panel** on a few of them in the service tab and compare the two dates; a run that stops keeps its position, and clicking the button again with the same number in **Parallel requests** resumes it where it stopped.
+
 ---
 
 ## 10. Sub-Reseller products, explained simply
@@ -345,7 +366,7 @@ Inside **Addons → Xtream AI Panel** you have these tabs:
 
 **Catalog** — to see what is on your panel: **Live Streams** (live channels) and **VOD** (movies and series). Each has its own search box.
 
-**Bulk tools** — the three operations that work on many services at once: **Index panel lines**, **Link existing services** and **Sync all services**. See section 9.
+**Bulk tools** — the four operations that work on many services at once: **Index panel lines**, **Link existing services**, **Sync all services** and **Align panel expiry to WHMCS**. See section 9.
 
 **Module Logs** — a history of what the module has done (each call to the panel API), with date, action and a short summary.
 

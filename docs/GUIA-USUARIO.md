@@ -261,7 +261,7 @@ En los dos casos WHMCS igual marca el servicio como suspendido o activo (las fac
 
 ## 9. Herramientas masivas
 
-La pestaña **Bulk tools** (**Addons → Xtream AI Panel → Bulk tools**) hace tres trabajos que, de otra forma, obligarían a editar los servicios uno por uno. Se ejecutan por lotes en tu navegador (100 líneas por petición al indexar, 100 servicios al vincular, 5 al sincronizar, porque cada sync es una llamada al panel) y muestran una barra de progreso, un contador por cada resultado y una fila por servicio. Se pueden volver a ejecutar sin miedo: nunca se duplica nada y nunca se borra nada del panel. Si una ejecución se corta a la mitad (el panel dejó de responder, se cerró la pestaña), vuelve a lanzarla: el índice se reconstruye desde cero y la vinculación no arranca hasta que el índice se haya completado una vez.
+La pestaña **Bulk tools** (**Addons → Xtream AI Panel → Bulk tools**) hace cuatro trabajos que, de otra forma, obligarían a editar los servicios uno por uno. Se ejecutan por lotes en tu navegador (100 líneas por petición al indexar, 100 servicios al vincular, 5 al sincronizar o al alinear vencimientos, porque cada servicio es una llamada al panel) y muestran una barra de progreso, un contador por cada resultado y una fila por servicio. Se pueden volver a ejecutar sin miedo: nunca se duplica nada y nunca se borra nada del panel. Si una ejecución se corta a la mitad (el panel dejó de responder, se cerró la pestaña), vuelve a lanzarla: el índice se reconstruye desde cero y la vinculación no arranca hasta que el índice se haya completado una vez.
 
 Una ejecución que se corta guarda su posición en el navegador, así que se puede reanudar después de recargar la página o incluso después de volver a iniciar sesión: abre **Bulk tools** en el mismo panel, pulsa el mismo botón y la ejecución continúa desde el último servicio que hizo. Mientras hay una ejecución en marcha, la página además renueva el token de seguridad de WHMCS cada cuatro minutos, lo que mantiene viva tu sesión de administrador durante las ejecuciones largas.
 
@@ -275,7 +275,7 @@ Lee las líneas que ya existen en el panel y guarda una copia local: id de la l�
 2. En la primera tarjeta, pulsa **Index lines** (indexar líneas).
 3. Espera a que termine la barra de progreso. Los contadores te dicen cuántas líneas se leyeron y cuántas hay ahora en el índice local.
 
-Ejecuta esto antes que las otras dos herramientas. Solo lee del panel, así que no cambia nada allí. Si lo vuelves a ejecutar, el índice de ese panel se reconstruye desde cero.
+Ejecuta esto antes que las otras herramientas. Solo lee del panel, así que no cambia nada allí. Si lo vuelves a ejecutar, el índice de ese panel se reconstruye desde cero.
 
 ### 9.2 Link existing services (vincular servicios existentes)
 
@@ -312,6 +312,27 @@ Ejecuta la misma acción que el botón **Sync bouquets, notes & connections** de
 
 La barra de progreso te dice **cuántas peticiones están en marcha y cuántos servicios se han procesado**, por ejemplo "3 workers, 120 services processed", y los contadores y la tabla de resultados recogen el resultado de todas ellas. Si una petición falla después de sus reintentos, la ejecución se detiene con un error y el mensaje indica el último servicio ya hecho de cada petición. Si vuelves a pulsar **Sync services** con el **mismo** número en **Parallel requests**, cada petición continúa donde se quedó, sin sincronizar dos veces un servicio. Si cambias el número, la siguiente ejecución empieza desde el principio: los repartos se calculan a partir de ese número, así que no coincidirían con la ejecución anterior, y la barra de progreso lo avisa.
 
+### 9.4 Align panel expiry to WHMCS (alinear el vencimiento del panel con WHMCS)
+
+Ejecuta la misma acción que el botón **Set panel expiry to WHMCS next due date** de cada servicio, pero para todos a la vez: el vencimiento de cada línea vinculada del panel pasa a ser la next due date de su servicio en WHMCS, a las **12:00 UTC** de ese día. El panel solo acepta el vencimiento con clave **Admin**, así que si la entrada del panel usa una clave Reseller la ejecución se detiene antes del primer servicio, te lo dice y no se envía nada al panel.
+
+1. Elige el panel.
+2. Marca **Include Suspended services** si también deben alinearse los servicios suspendidos. Sin marcarlo, esos servicios se omiten y el contador **Skipped (Suspended)** te dice cuántos quedaron fuera en cada lote.
+3. Pon **Parallel requests** (de 1 a 4, 3 por defecto) en la misma fila, igual que en la tarjeta anterior: cuántos servicios se actualizan a la vez. Déjalo en el mismo valor para reanudar una ejecución que se cortó.
+4. Pulsa **Align expiry dates** (alinear vencimientos).
+
+Por cada servicio obtienes una fila con el id del servicio, el cliente, el usuario y el resultado:
+
+| Resultado | Qué significa |
+|---|---|
+| `aligned` | El vencimiento de la línea del panel se puso a la next due date de WHMCS. El mensaje muestra la fecha. |
+| `skipped_no_due_date` | El servicio no tiene next due date en WHMCS (vacía o `0000-00-00`), así que no hay nada que copiar. El servicio no se tocó. |
+| `skipped_suspended` | El servicio está Suspended en WHMCS y no marcaste **Include Suspended services**. |
+| `skipped_sub_reseller` | El producto es Sub-Reseller: no hay vencimiento de línea que poner. |
+| `error` | El módulo lo rechazó o falló en ese servicio. La columna de mensaje explica qué, por ejemplo una next due date que no pudo usar o una línea que no encontró. |
+
+**Aviso:** esto sobreescribe el vencimiento de **todas las líneas activas y vinculadas** del panel seleccionado con la next due date que WHMCS tiene para cada servicio. Si una fecha está mal en WHMCS, la línea del panel también quedará mal. Antes de una ejecución sobre muchos servicios, pulsa **Refresh from panel** en unos cuantos desde la pestaña del servicio y compara las dos fechas; una ejecución que se corta guarda su posición, y si vuelves a pulsar el botón con el mismo número en **Parallel requests** continúa donde se quedó.
+
 ---
 
 ## 10. Productos Sub-Reseller explicados fácil
@@ -347,7 +368,7 @@ Dentro de **Addons → Xtream AI Panel** tienes estas pestañas:
 
 **Catalog** — para ver qué hay en tu panel: **Live Streams** (canales en directo) y **VOD** (películas y series). Tiene su propio buscador.
 
-**Bulk tools** — las tres operaciones que trabajan sobre muchos servicios a la vez: **Index panel lines**, **Link existing services** y **Sync all services**. Mira la sección 9.
+**Bulk tools** — las cuatro operaciones que trabajan sobre muchos servicios a la vez: **Index panel lines**, **Link existing services**, **Sync all services** y **Align panel expiry to WHMCS**. Mira la sección 9.
 
 **Module Logs** — un historial de lo que ha hecho el módulo (cada llamada a la API del panel), con fecha, acción y un resumen breve.
 

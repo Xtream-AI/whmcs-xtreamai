@@ -83,10 +83,11 @@ account on the panel:
 
 The addon has a **Bulk tools** view for operations that touch many
 services at once. It runs from the browser in batches (100 services for
-linking, 5 per request for syncing), shows a progress bar, a counter per
-outcome and a result row per service (service id, client, username,
-outcome and message). Every operation is idempotent: running it again
-never duplicates rows and never breaks a link that already exists.
+linking, 5 per request for syncing and for aligning expiries), shows a
+progress bar, a counter per outcome and a result row per service (service
+id, client, username, outcome and message). Every operation is
+idempotent: running it again never duplicates rows and never breaks a
+link that already exists.
 
 1. **Index panel lines.** Reads every line of the selected panel and
    stores it locally in `mod_xtreamai_line_index` (line id, username,
@@ -122,13 +123,28 @@ never duplicates rows and never breaks a link that already exists.
    (each panel keeps its position in the browser), and the page
    refreshes the security token every four minutes so a long run does
    not outlive the admin session.
+4. **Align panel expiry to WHMCS.** Calls the server module's
+   `push_expiry` for every linked, active service of the panel through
+   WHMCS's local API, so the expiry of each panel line is set to the
+   WHMCS next due date of its service (12:00 UTC of that day), exactly
+   as when you press **Set panel expiry to WHMCS next due date** on a
+   single service. It needs an **Admin** key on the panel entry: with a
+   reseller key the run stops before the first service and changes
+   nothing. Services without a next due date in WHMCS are skipped and
+   counted as `skipped_no_due_date`; Sub-Reseller products as
+   `skipped_sub_reseller`. **Include Suspended services** and
+   **Parallel requests** work as in the previous card, and the same
+   warning applies: a wrong next due date in WHMCS becomes a wrong
+   expiry on the panel.
 
 Use the Bulk tools when you migrate services from another WHMCS module
 (the panel lines already exist and carry the `WHMCS:<service id>` tag in
 their notes, so indexing plus linking rebuilds every link without
 creating new lines), and after you change a product config option or a
 configurable option that affects many services at once and want the new
-connection count applied to all of them.
+connection count applied to all of them, and after you fix next due
+dates in WHMCS (or import them from another system) and want every panel
+line to expire on the same day again.
 
 ## Who it's for
 
@@ -361,6 +377,11 @@ the panel**, and the buttons are:
 - **Set WHMCS next due date to panel expiry** does the opposite and needs
   no admin key.
 
+The bulk counterpart of **Set panel expiry to WHMCS next due date** is
+**Align panel expiry to WHMCS** in **Bulk tools**, which runs it for every
+linked service of the panel at once; there is no bulk version of **Set
+WHMCS next due date to panel expiry**.
+
 **Dates and time zones.** The panel expiry is a UTC timestamp and the
 WHMCS next due date is a plain date. The module works with whole days in
 UTC: when it pushes a WHMCS date to the panel it uses **12:00 UTC** of
@@ -467,18 +488,22 @@ modules/
       PanelApiRequestException.php
 tests/
   run.php                     server module tests, no WHMCS required
+  updater.php                 in-app updater tests, no network required
+  bulk-expiry.php             bulk expiry tests, no WHMCS required
 ```
 
 Run the tests with any PHP 7.2+ binary, from the repository root:
 
 ```bash
 php tests/run.php
+php tests/updater.php
+php tests/bulk-expiry.php
 ```
 
-The runner declares the few WHMCS helpers the server module uses
-(`Capsule`, `logModuleCall`, `encrypt`) and its own `PanelApi`,
+Each runner declares the few WHMCS helpers it uses (`Capsule`,
+`logModuleCall`, `encrypt`, `localAPI`) and its own `PanelApi`,
 `ServiceStore`, `Settings` and `PanelStore` doubles, so no WHMCS
-installation, database or panel is needed. It exits with a non-zero
+installation, database or panel is needed. They exit with a non-zero
 status when a check fails.
 
 User documentation (non-technical):

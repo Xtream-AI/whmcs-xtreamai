@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.6.0',
+        'version'     => '1.7.0',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -75,6 +75,10 @@ function xtreamai_output($vars)
 
     if ($action === 'ajax_bulk_sync') {
         xtreamai_ajax_bulk_sync();
+    }
+
+    if ($action === 'ajax_bulk_expiry') {
+        xtreamai_ajax_bulk_expiry();
     }
 
     if ($action === 'ajax_bulk_token') {
@@ -873,6 +877,182 @@ function xtreamai_ajax_bulk_sync()
     } catch (\Throwable $e) {
         xtreamai_json(['ok' => false, 'done' => true, 'message' => xtreamai_safe_message($e)]);
     }
+}
+
+function xtreamai_ajax_bulk_expiry()
+{
+    header('Content-Type: application/json; charset=utf-8');
+
+    if (!xtreamai_check_csrf()) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => 'Invalid security token.']);
+    }
+
+    if (!function_exists('localAPI')) {
+        xtreamai_json([
+            'ok'      => false,
+            'done'    => true,
+            'message' => 'The WHMCS local API is not available on this installation.',
+        ]);
+    }
+
+    xtreamai_bulk_require_post();
+
+    $panelId    = (int) ($_REQUEST['panel_id'] ?? 0);
+    $afterId    = (int) ($_REQUEST['after_id'] ?? 0);
+    $includeAll = ((string) ($_REQUEST['include_all'] ?? '0')) === '1';
+    $worker     = (int) ($_REQUEST['worker'] ?? 0);
+    $workers    = isset($_REQUEST['workers']) ? (int) $_REQUEST['workers'] : 1;
+
+    if ($panelId < 1) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => 'Select a panel first.']);
+    }
+
+    if ($workers < 1 || $workers > 4 || $worker < 0 || $worker >= $workers) {
+        xtreamai_json([
+            'ok'      => false,
+            'done'    => true,
+            'message' => 'Invalid parallel request selection. Use 1 to 4 workers and a worker index below the total.',
+        ]);
+    }
+
+    try {
+        if (\WhmcsXtreamAI\PanelApi::keyType($panelId) !== 'admin') {
+            xtreamai_json([
+                'ok'      => false,
+                'done'    => true,
+                'message' => 'Setting the panel expiry requires an admin panel key on this panel entry.',
+            ]);
+        }
+
+        $adminUsername = xtreamai_bulk_admin_username();
+        $batchSize     = 5;
+        $statuses      = $includeAll ? ['Active', 'Suspended'] : ['Active'];
+
+        $query = \WHMCS\Database\Capsule::table('mod_xtreamai_services')
+            ->join('tblhosting', 'tblhosting.id', '=', 'mod_xtreamai_services.service_id')
+            ->join('tblproducts', 'tblproducts.id', '=', 'tblhosting.packageid')
+            ->leftJoin('tblclients', 'tblclients.id', '=', 'tblhosting.userid')
+            ->where('mod_xtreamai_services.panel_id', $panelId)
+            ->where('mod_xtreamai_services.panel_account_id', '<>', '')
+            ->where('tblproducts.servertype', 'xtreamai')
+            ->whereIn('tblhosting.domainstatus', $statuses)
+            ->where('mod_xtreamai_services.service_id', '>', $afterId);
+
+        if ($workers > 1) {
+            $query->whereRaw('MOD(mod_xtreamai_services.service_id, ?) = ?', [$workers, $worker]);
+        }
+
+        $rows = $query->orderBy('mod_xtreamai_services.service_id', 'asc')
+            ->limit($batchSize)
+            ->select([
+                'mod_xtreamai_services.service_id as service_id',
+                'mod_xtreamai_services.username as line_username',
+                'tblclients.firstname as firstname',
+                'tblclients.lastname as lastname',
+                'tblhosting.nextduedate as nextduedate',
+                'tblproducts.configoption5 as type_option',
+            ])
+            ->get();
+
+        $counts  = [];
+        $results = [];
+        $lastId  = $afterId;
+        $done    = count($rows) < $batchSize;
+
+        foreach ($rows as $row) {
+            $serviceId = (int) $row->service_id;
+            $lastId    = $serviceId;
+            $client    = trim(((string) $row->firstname) . ' ' . ((string) $row->lastname));
+            $outcome   = 'error';
+            $message   = '';
+
+            try {
+                $pair = xtreamai_bulk_expiry_outcome(
+                    [
+                        'service_id'  => $serviceId,
+                        'type_option' => (string) $row->type_option,
+                        'nextduedate' => (string) $row->nextduedate,
+                    ],
+                    static function (int $id) use ($adminUsername) {
+                        return localAPI('ModuleCustom', ['accountid' => $id, 'serviceid' => $id, 'func_name' => 'push_expiry'], $adminUsername);
+                    }
+                );
+
+                $outcome = (string) $pair[0];
+                $message = (string) $pair[1];
+            } catch (\Throwable $e) {
+                $outcome = 'error';
+                $message = xtreamai_safe_message($e);
+            }
+
+            $counts[$outcome] = ($counts[$outcome] ?? 0) + 1;
+            $results[] = [
+                'service_id' => $serviceId,
+                'client'     => $client,
+                'username'   => (string) $row->line_username,
+                'outcome'    => $outcome,
+                'message'    => $message,
+            ];
+        }
+
+        $skippedSuspended = $includeAll
+            ? 0
+            : xtreamai_bulk_skipped_suspended($panelId, $afterId, $lastId, $done, $workers, $worker);
+        if ($skippedSuspended > 0) {
+            $counts['skipped_suspended'] = ($counts['skipped_suspended'] ?? 0) + $skippedSuspended;
+        }
+
+        xtreamai_json([
+            'ok'                => true,
+            'done'              => $done,
+            'next'              => $lastId,
+            'processed'         => count($results),
+            'skipped_suspended' => $skippedSuspended,
+            'counts'            => $counts,
+            'rows'              => $results,
+        ]);
+    } catch (\Throwable $e) {
+        xtreamai_json(['ok' => false, 'done' => true, 'message' => xtreamai_safe_message($e)]);
+    }
+}
+
+function xtreamai_bulk_expiry_outcome(array $row, callable $runModule): array
+{
+    $type = strtolower(trim((string) ($row['type_option'] ?? ($row['configoption5'] ?? ''))));
+
+    if ($type === 'reseller') {
+        return ['skipped_sub_reseller', 'Sub-Reseller product: no line expiry to set.'];
+    }
+
+    $nextDue = trim((string) ($row['nextduedate'] ?? ''));
+
+    if ($nextDue === '' || strpos($nextDue, '0000-00-00') === 0) {
+        return ['skipped_no_due_date', 'The service has no next due date in WHMCS.'];
+    }
+
+    $result = $runModule((int) ($row['service_id'] ?? 0));
+
+    if (is_array($result) && isset($result['result']) && $result['result'] === 'success') {
+        return ['aligned', 'Panel expiry set to ' . xtreamai_bulk_expiry_date($nextDue)];
+    }
+
+    return [
+        'error',
+        (is_array($result) && isset($result['message']) && is_scalar($result['message']))
+            ? (string) $result['message']
+            : 'The module did not report success.',
+    ];
+}
+
+function xtreamai_bulk_expiry_date(string $value): string
+{
+    $raw = trim($value);
+
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $raw, $matches) === 1) {
+        return $matches[1] . '-' . $matches[2] . '-' . $matches[3];
+    }
+
+    return $raw;
 }
 
 function xtreamai_bulk_skipped_suspended(
@@ -1961,11 +2141,24 @@ JS;
                 $h
             );
 
+            echo xtreamai_bulk_card(
+                'expiry',
+                '4. Align panel expiry to WHMCS',
+                'Runs, for every linked service of the panel, the same action as the Set panel expiry to WHMCS next due date button on the service page: the expiry of the line on the panel is set to the next due date of the service in WHMCS, at 12:00 UTC. It requires an admin panel key. Services without a next due date are skipped and counted.',
+                'Align expiry dates',
+                'Include Suspended services',
+                'Parallel requests',
+                'This overwrites the expiry of every linked active line of the panel with the WHMCS next due date. If the WHMCS dates are wrong, the panel lines will be wrong too: run Refresh from panel on a few services first to compare. Keep the same Parallel requests value to resume a run that stopped.',
+                $resultColumns,
+                $h
+            );
+
             $bulkUrls = json_encode([
-                'index' => xtreamai_link($modulelink, ['action' => 'ajax_bulk_index']),
-                'link'  => xtreamai_link($modulelink, ['action' => 'ajax_bulk_link']),
-                'sync'  => xtreamai_link($modulelink, ['action' => 'ajax_bulk_sync']),
-                'token' => xtreamai_link($modulelink, ['action' => 'ajax_bulk_token']),
+                'index'  => xtreamai_link($modulelink, ['action' => 'ajax_bulk_index']),
+                'link'   => xtreamai_link($modulelink, ['action' => 'ajax_bulk_link']),
+                'sync'   => xtreamai_link($modulelink, ['action' => 'ajax_bulk_sync']),
+                'expiry' => xtreamai_link($modulelink, ['action' => 'ajax_bulk_expiry']),
+                'token'  => xtreamai_link($modulelink, ['action' => 'ajax_bulk_token']),
             ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
             $bulkScript = <<<'JS'
@@ -1976,7 +2169,8 @@ JS;
     var outcomes = {
         index: ['indexed', 'total'],
         link: ['linked_by_tag', 'linked_by_username', 'not_found', 'ambiguous_tag', 'skipped_sub_reseller', 'skipped_other_panel', 'error'],
-        sync: ['synced', 'skipped_suspended', 'skipped_sub_reseller', 'error']
+        sync: ['synced', 'skipped_suspended', 'skipped_sub_reseller', 'error'],
+        expiry: ['aligned', 'skipped_no_due_date', 'skipped_suspended', 'skipped_sub_reseller', 'error']
     };
     var labels = {
         indexed: 'Lines indexed',
@@ -1988,8 +2182,10 @@ JS;
         skipped_sub_reseller: 'Sub-Reseller skipped',
         skipped_other_panel: 'Other panel skipped',
         skipped_suspended: 'Skipped (Suspended)',
+        skipped_no_due_date: 'Skipped (no due date)',
         error: 'Errors',
-        synced: 'Synced'
+        synced: 'Synced',
+        aligned: 'Aligned'
     };
     var running = false;
     var resumeFrom = {};
@@ -2101,24 +2297,25 @@ JS;
         if (linkMarker !== '' && linkMarker !== '0') {
             resumeFrom.link = linkMarker;
             setBar('link', 'error', 'A previous run stopped after service #' + linkMarker + '. Click the button to resume.');
-            return;
         }
 
-        var syncState = loadResume('sync');
-        if (!syncState || !Array.isArray(syncState.markers) || syncState.markers.length < 1) { return; }
+        ['sync', 'expiry'].forEach(function (op) {
+            var state = loadResume(op);
+            if (!state || !Array.isArray(state.markers) || state.markers.length < 1) { return; }
 
-        var parts = [];
-        var markers = [];
-        for (var i = 0; i < syncState.markers.length; i++) {
-            var marker = String(syncState.markers[i]);
-            markers.push(marker);
-            if (marker !== '0') { parts.push(marker); }
-        }
+            var parts = [];
+            var markers = [];
+            for (var i = 0; i < state.markers.length; i++) {
+                var marker = String(state.markers[i]);
+                markers.push(marker);
+                if (marker !== '0') { parts.push(marker); }
+            }
 
-        resumeFrom.sync = { workers: parseInt(syncState.workers, 10) || 1, markers: markers };
-        if (parts.length > 0) {
-            setBar('sync', 'error', 'A previous run stopped after service #' + parts.join(', #') + '. Click the button to resume.');
-        }
+            resumeFrom[op] = { workers: parseInt(state.workers, 10) || 1, markers: markers };
+            if (parts.length > 0) {
+                setBar(op, 'error', 'A previous run stopped after service #' + parts.join(', #') + '. Click the button to resume.');
+            }
+        });
     }
 
     function pick(root, selector) {
@@ -2255,7 +2452,7 @@ JS;
             }
         }
 
-        function runSync() {
+        function runParallel(op) {
             var workers = readWorkers(root);
             var markers = [];
             var previous = [];
@@ -2266,7 +2463,7 @@ JS;
             var reported = false;
             var failText = '';
             var note = '';
-            var stored = resumeFrom.sync;
+            var stored = resumeFrom[op];
             var resuming = false;
             var tokenRetried = [];
 
@@ -2274,8 +2471,8 @@ JS;
                 resuming = true;
             } else if (stored) {
                 note = 'The last run used ' + workerLabel(stored.workers) + ' and this one uses ' + workerLabel(workers) + ': starting over from the beginning. ';
-                delete resumeFrom.sync;
-                dropResume('sync');
+                delete resumeFrom[op];
+                dropResume(op);
             }
 
             for (var i = 0; i < workers; i++) {
@@ -2310,7 +2507,7 @@ JS;
             function stopWhenIdle() {
                 if (active > 0 || !failed || reported) { return; }
                 reported = true;
-                setBar('sync', 'error', failText);
+                setBar(op, 'error', failText);
                 finish();
             }
 
@@ -2323,8 +2520,8 @@ JS;
                     if (markers[f] !== '0') { parts.push(markers[f]); }
                 }
                 if (parts.length > 0) {
-                    resumeFrom.sync = { workers: workers, markers: markers.slice() };
-                    storeResume('sync', resumeFrom.sync);
+                    resumeFrom[op] = { workers: workers, markers: markers.slice() };
+                    storeResume(op, resumeFrom[op]);
                     failText += ' Stopped after service #' + parts.join(', #') + '. Click the button again with ' + workerLabel(workers) + ' to resume from there.';
                 }
                 stopWhenIdle();
@@ -2342,7 +2539,7 @@ JS;
                 body.set('workers', String(workers));
 
                 active++;
-                fetch(urls.sync, { method: 'POST', body: body, credentials: 'same-origin' })
+                fetch(urls[op], { method: 'POST', body: body, credentials: 'same-origin' })
                     .then(function (response) { return response.json(); })
                     .then(function (data) {
                         if (failed) { active--; stopWhenIdle(); return; }
@@ -2370,26 +2567,26 @@ JS;
                         retries[w] = 0;
                         tokenRetried[w] = false;
                         processedTotal += parseInt(data.processed, 10) || 0;
-                        addRows('sync', data.rows || [], keys);
+                        addRows(op, data.rows || [], keys);
                         if (data.counts && typeof data.counts === 'object') {
                             Object.keys(data.counts).forEach(function (key) {
                                 counts[key] = (counts[key] || 0) + (parseInt(data.counts[key], 10) || 0);
                             });
                         }
-                        renderCounters('sync', counts);
+                        renderCounters(op, counts);
                         if (data.done) {
                             finished[w] = true;
                             if (data.next !== undefined && data.next !== null && String(data.next) !== '') {
                                 markers[w] = String(data.next);
                             }
                             if (allDone()) {
-                                delete resumeFrom.sync;
-                                dropResume('sync');
-                                setBar('sync', 'done', note + 'Done. ' + processedTotal + ' services processed in ' + batches + ' batches.');
+                                delete resumeFrom[op];
+                                dropResume(op);
+                                setBar(op, 'done', note + 'Done. ' + processedTotal + ' services processed in ' + batches + ' batches.');
                                 finish();
                                 return;
                             }
-                            setBar('sync', 'running', progressText());
+                            setBar(op, 'running', progressText());
                             return;
                         }
                         var nextId = parseInt(data.next, 10);
@@ -2399,7 +2596,7 @@ JS;
                         }
                         previous[w] = nextId;
                         markers[w] = String(nextId);
-                        setBar('sync', 'running', progressText());
+                        setBar(op, 'running', progressText());
                         step(w);
                     })
                     .catch(function () {
@@ -2407,7 +2604,7 @@ JS;
                         if (failed) { stopWhenIdle(); return; }
                         if (retries[w] < 2) {
                             retries[w]++;
-                            setBar('sync', 'running', 'Worker ' + (w + 1) + ' request failed, retrying in 10 seconds (attempt ' + (retries[w] + 1) + ' of 3)...');
+                            setBar(op, 'running', 'Worker ' + (w + 1) + ' request failed, retrying in 10 seconds (attempt ' + (retries[w] + 1) + ' of 3)...');
                             setTimeout(function () {
                                 if (failed) { stopWhenIdle(); return; }
                                 step(w);
@@ -2418,14 +2615,14 @@ JS;
                     });
             }
 
-            setBar('sync', 'running', progressText());
+            setBar(op, 'running', progressText());
             for (var s = 0; s < workers; s++) {
                 step(s);
             }
         }
 
-        if (op === 'sync') {
-            runSync();
+        if (op === 'sync' || op === 'expiry') {
+            runParallel(op);
             return;
         }
 

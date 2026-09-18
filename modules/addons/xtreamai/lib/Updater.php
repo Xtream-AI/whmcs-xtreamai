@@ -216,10 +216,9 @@ final class Updater
 
         $steps[] = 'Archive extracted into ' . $extractDir . '.';
 
-        $sourceServer = $extractDir . '/' . self::ARCHIVE_ROOT . '/modules/servers/' . self::DIR_NAME;
-        $sourceAddon = $extractDir . '/' . self::ARCHIVE_ROOT . '/modules/addons/' . self::DIR_NAME;
+        $sourceRoot = self::archiveRoot($extractDir);
 
-        if (!is_file($sourceServer . '/xtreamai.php') || !is_file($sourceAddon . '/xtreamai.php')) {
+        if ($sourceRoot === null) {
             self::removeTree($temp);
 
             return self::failure(
@@ -227,6 +226,9 @@ final class Updater
                 $steps
             );
         }
+
+        $sourceServer = $sourceRoot . '/modules/servers/' . self::DIR_NAME;
+        $sourceAddon = $sourceRoot . '/modules/addons/' . self::DIR_NAME;
 
         $archiveVersion = self::jsonVersion($sourceAddon . '/whmcs.json');
 
@@ -919,6 +921,40 @@ final class Updater
         }
 
         return ['modules' => $modules, 'server' => $server, 'addon' => $addon];
+    }
+
+    private static function archiveRoot(string $extractDir): ?string
+    {
+        $entries = (array) @scandir($extractDir);
+        $preferred = $extractDir . '/' . self::ARCHIVE_ROOT;
+
+        if (self::isModuleRoot($preferred)) {
+            return $preferred;
+        }
+
+        $candidates = [];
+
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..' || !is_string($entry)) {
+                continue;
+            }
+
+            $path = $extractDir . '/' . $entry;
+
+            if (!is_dir($path) || !self::isModuleRoot($path)) {
+                continue;
+            }
+
+            $candidates[] = $path;
+        }
+
+        return count($candidates) === 1 ? $candidates[0] : null;
+    }
+
+    private static function isModuleRoot(string $path): bool
+    {
+        return is_file($path . '/modules/servers/' . self::DIR_NAME . '/xtreamai.php')
+            && is_file($path . '/modules/addons/' . self::DIR_NAME . '/xtreamai.php');
     }
 
     private static function jsonVersion(string $file): string

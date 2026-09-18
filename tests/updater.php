@@ -191,32 +191,57 @@ namespace {
             && copyTree($repo . '/modules/addons/xtreamai', $root . '/modules/addons/xtreamai');
     }
 
-    function buildRelease($scratch, $repo, $version)
+    function buildRelease($scratch, $repo, $version, $rootName = 'whmcs-xtreamai')
+    {
+        return buildRootsRelease($scratch, $repo, $version, array($rootName), true);
+    }
+
+    function buildRootsRelease($scratch, $repo, $version, array $roots, $withModules)
     {
         $releaseParent = $scratch . '/release';
-        $releaseRoot = $releaseParent . '/whmcs-xtreamai';
 
         removeTree($releaseParent);
 
-        if (!copyTree($repo . '/modules/servers/xtreamai', $releaseRoot . '/modules/servers/xtreamai')) {
-            return null;
-        }
+        foreach ($roots as $rootName) {
+            $releaseRoot = $releaseParent . '/' . $rootName;
 
-        if (!copyTree($repo . '/modules/addons/xtreamai', $releaseRoot . '/modules/addons/xtreamai')) {
-            return null;
-        }
+            if (!is_dir($releaseRoot) && !@mkdir($releaseRoot, 0755, true) && !is_dir($releaseRoot)) {
+                return null;
+            }
 
-        setJsonVersion($releaseRoot . '/modules/servers/xtreamai/whmcs.json', $version);
-        setJsonVersion($releaseRoot . '/modules/addons/xtreamai/whmcs.json', $version);
-        @file_put_contents($releaseRoot . '/modules/servers/xtreamai/release-marker.txt', $version . "\n");
-        @file_put_contents($releaseRoot . '/modules/addons/xtreamai/release-marker.txt', $version . "\n");
+            @file_put_contents($releaseRoot . '/release-notes.txt', $version . "\n");
+
+            if (!$withModules) {
+                continue;
+            }
+
+            if (!copyTree($repo . '/modules/servers/xtreamai', $releaseRoot . '/modules/servers/xtreamai')) {
+                return null;
+            }
+
+            if (!copyTree($repo . '/modules/addons/xtreamai', $releaseRoot . '/modules/addons/xtreamai')) {
+                return null;
+            }
+
+            setJsonVersion($releaseRoot . '/modules/servers/xtreamai/whmcs.json', $version);
+            setJsonVersion($releaseRoot . '/modules/addons/xtreamai/whmcs.json', $version);
+            @file_put_contents($releaseRoot . '/modules/servers/xtreamai/release-marker.txt', $version . "\n");
+            @file_put_contents($releaseRoot . '/modules/addons/xtreamai/release-marker.txt', $version . "\n");
+        }
 
         $tarball = $scratch . '/whmcs-xtreamai-' . $version . '.tar.gz';
         @unlink($tarball);
+
+        $members = '';
+
+        foreach ($roots as $rootName) {
+            $members .= ' ' . escapeshellarg($rootName);
+        }
+
         exec(
             'tar -czf ' . escapeshellarg($tarball)
             . ' -C ' . escapeshellarg($releaseParent)
-            . ' ' . escapeshellarg('whmcs-xtreamai') . ' 2>&1',
+            . $members . ' 2>&1',
             $output,
             $status
         );
@@ -465,6 +490,99 @@ namespace {
         same('the addon backup was consumed by the restore', array(), matches($root . '/modules/addons', 'xtreamai.bak-'));
         same('no server staging folder is left', array(), matches($root . '/modules/servers', 'xtreamai.new-'));
         same('no addon staging folder is left', array(), matches($root . '/modules/addons', 'xtreamai.new-'));
+        same('no updater temp directory is left', $tempBefore, tempDirectories($tempPrefix));
+
+        section('F. The archive root folder is detected, not assumed');
+
+        $releaseFiles = buildRelease($scratch, $repo, $releaseVersion, 'whmcs-xtreamai-' . $releaseVersion);
+
+        if ($releaseFiles === null) {
+            removeTree($scratch);
+            echo "FAIL  the renamed-root release tarball could not be built\n";
+            exit(1);
+        }
+
+        resetLiveFolders($root, $repo);
+        $tempBefore = tempDirectories($tempPrefix);
+        $result = runApply(
+            null,
+            releaseFetch(basename($releaseFiles['tarball']), $releaseVersion),
+            releaseDownload($releaseFiles['tarball'], $releaseFiles['checksum'])
+        );
+
+        same('a tarball whose root folder has another name still updates', true, $result['ok']);
+        same('the server folder holds the release version', $releaseVersion, jsonVersion(serverFolder($root) . '/whmcs.json'));
+        same('the addon folder holds the release version', $releaseVersion, jsonVersion(addonFolder($root) . '/whmcs.json'));
+        ok('the server release file was installed', is_file(serverFolder($root) . '/release-marker.txt'));
+        ok('the addon release file was installed', is_file(addonFolder($root) . '/release-marker.txt'));
+        same('no server staging folder is left', array(), matches($root . '/modules/servers', 'xtreamai.new-'));
+        same('no addon staging folder is left', array(), matches($root . '/modules/addons', 'xtreamai.new-'));
+        same('no updater temp directory is left', $tempBefore, tempDirectories($tempPrefix));
+
+        section('G. Two candidate roots fail closed');
+
+        $releaseFiles = buildRootsRelease(
+            $scratch,
+            $repo,
+            $releaseVersion,
+            array('whmcs-xtreamai-one', 'whmcs-xtreamai-two'),
+            true
+        );
+
+        if ($releaseFiles === null) {
+            removeTree($scratch);
+            echo "FAIL  the two-root release tarball could not be built\n";
+            exit(1);
+        }
+
+        resetLiveFolders($root, $repo);
+        $tempBefore = tempDirectories($tempPrefix);
+        $result = runApply(
+            null,
+            releaseFetch(basename($releaseFiles['tarball']), $releaseVersion),
+            releaseDownload($releaseFiles['tarball'], $releaseFiles['checksum'])
+        );
+
+        same('a tarball with two candidate roots is refused', false, $result['ok']);
+        ok(
+            'the refusal message names the module folders',
+            strpos($result['message'], 'does not contain the xtreamai folder') !== false,
+            $result['message']
+        );
+        same('the server folder keeps the installed version', $installedVersion, jsonVersion(serverFolder($root) . '/whmcs.json'));
+        same('the addon folder keeps the installed version', $installedVersion, jsonVersion(addonFolder($root) . '/whmcs.json'));
+        ok('no release file was installed in the server folder', !is_file(serverFolder($root) . '/release-marker.txt'));
+        same('no server staging folder is left', array(), matches($root . '/modules/servers', 'xtreamai.new-'));
+        same('no addon staging folder is left', array(), matches($root . '/modules/addons', 'xtreamai.new-'));
+        same('no updater temp directory is left', $tempBefore, tempDirectories($tempPrefix));
+
+        section('H. An archive without a candidate root fails closed');
+
+        $releaseFiles = buildRootsRelease($scratch, $repo, $releaseVersion, array('whmcs-xtreamai'), false);
+
+        if ($releaseFiles === null) {
+            removeTree($scratch);
+            echo "FAIL  the module-less release tarball could not be built\n";
+            exit(1);
+        }
+
+        resetLiveFolders($root, $repo);
+        $tempBefore = tempDirectories($tempPrefix);
+        $result = runApply(
+            null,
+            releaseFetch(basename($releaseFiles['tarball']), $releaseVersion),
+            releaseDownload($releaseFiles['tarball'], $releaseFiles['checksum'])
+        );
+
+        same('a tarball without the module folders is refused', false, $result['ok']);
+        ok(
+            'the refusal message names the module folders',
+            strpos($result['message'], 'does not contain the xtreamai folder') !== false,
+            $result['message']
+        );
+        same('the server folder keeps the installed version', $installedVersion, jsonVersion(serverFolder($root) . '/whmcs.json'));
+        same('the addon folder keeps the installed version', $installedVersion, jsonVersion(addonFolder($root) . '/whmcs.json'));
+        ok('no release file was installed in the addon folder', !is_file(addonFolder($root) . '/release-marker.txt'));
         same('no updater temp directory is left', $tempBefore, tempDirectories($tempPrefix));
 
         removeTree($scratch);
