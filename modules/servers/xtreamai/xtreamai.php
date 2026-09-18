@@ -276,10 +276,17 @@ function xtreamai_accountTypeVisibility(): string
         var $group = $('[name="packageconfigoption[8]"]').first();
         if (!$type.length || !$credits.length || $type.data('xtai-account-ready')) { return; }
         $type.data('xtai-account-ready', 1);
+        function toggleCells($field, show) {
+            var $inputTd = $field.closest('td');
+            if (!$inputTd.length) { return; }
+            var $labelTd = $inputTd.prev('td');
+            $inputTd.toggle(show);
+            $labelTd.toggle(show);
+        }
         function apply() {
             var isReseller = String($type.val() || '').toLowerCase() === 'reseller';
-            $credits.closest('tr').toggle(isReseller);
-            if ($group.length) { $group.closest('tr').toggle(isReseller); }
+            toggleCells($credits, isReseller);
+            if ($group.length) { toggleCells($group, isReseller); }
         }
         $type.on('change.xtaiAccount', apply);
         apply();
