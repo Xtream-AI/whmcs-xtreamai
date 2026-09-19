@@ -404,6 +404,35 @@ final class PanelApi
 
     
 
+    public static function findResellerByUsername(int $panelId, string $username): ?array
+    {
+        $wanted = trim($username);
+        if ($wanted === '') {
+            return null;
+        }
+
+        return self::withClient($panelId, static function (PanelHttpClient $client) use ($wanted): ?array {
+            $query = ['username' => $wanted, 'limit' => '2'];
+            $body = $client->request('GET', '/panel-api/v1/resellers', $query);
+
+            foreach (self::items($body) as $reseller) {
+                $found = (string) self::value($reseller, 'username', '');
+                if (strcasecmp($found, $wanted) !== 0) {
+                    continue;
+                }
+
+                return [
+                    'id' => (string) self::value($reseller, 'id', ''),
+                    'username' => $found,
+                ];
+            }
+
+            return null;
+        });
+    }
+
+    
+
     public static function createReseller(
         int $panelId,
         string $username,

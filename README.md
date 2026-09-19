@@ -462,16 +462,23 @@ package on a monthly cycle jumps a year ahead.
 
 A third account type, **Credit top-up (existing Sub-Reseller)**, sells credits
 instead of access: on payment, and again on every renewal, the module adds the
-configured amount to a Sub-Reseller account the same WHMCS client already has
-on that panel, and creates nothing. The amount comes from a configurable
-option named `credits` (also `credit_amount` or `topup_credits`) or, when the
-product has none, from its **Credits** field, so one product can sell 100, 500
-and 1000 credit packages. The destination is the client's active Sub-Reseller
-service linked to the same panel; when the client owns more than one, add a
-required custom field named `Reseller username` so the customer chooses the
-account. Suspend and Unsuspend only change the WHMCS service state and
-Terminate only unlinks it, so the balance is never touched. Needs an admin
-key, like every Sub-Reseller feature.
+configured amount to an existing Sub-Reseller account on the same panel, and
+creates nothing. The amount comes from a configurable option named `credits`
+(also `credit_amount` or `topup_credits`) or, when the product has none, from
+its **Credits** field, so one product can sell 100, 500 and 1000 credit
+packages. The destination is the client's active Sub-Reseller service linked to
+the same panel; with a custom field named `Reseller username` (also
+`Panel username` or `Sub-Reseller username`) on the product, the module takes
+the username the customer types instead and looks it up directly on the panel
+(`GET /panel-api/v1/resellers?username=…`, exact match, admin key), so an
+account an admin created by hand, which never went through WHMCS, can buy
+credits too. The top-up service stays linked to the account it credited, so
+every renewal keeps topping up that account. The custom field on every top-up
+product is the recommended setup: without it the module only gets it right when
+the client has exactly one linked Sub-Reseller service on that panel. Suspend
+and Unsuspend only change the WHMCS service state and Terminate only unlinks
+it, so the balance is never touched. Needs an admin key, like every
+Sub-Reseller feature.
 
 ## Security notes
 

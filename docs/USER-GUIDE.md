@@ -352,17 +352,17 @@ You don't need to choose Package or Bouquets for this type: the module ignores t
 
 ### Selling credit top-ups
 
-A **Credit top-up** product creates nothing new: when it is paid, it **adds credits** to a Sub-Reseller account your customer already has on the same panel. Use it when your resellers buy credit packages from your website.
+A **Credit top-up** product creates nothing new: when it is paid, it **adds credits** to a Sub-Reseller account that already exists on the same panel. Use it when your resellers buy credit packages from your website.
 
 1. Create a product as usual and open its **Module Settings** tab.
 2. Set **Account Type** to `Credit top-up (existing Sub-Reseller)`.
 3. In **Credits**, type how many credits each order adds. If you want to sell several package sizes (100, 500, 1000) from one product, add a WHMCS **Configurable Option** named `credits` instead (a quantity, or a dropdown with the three sizes): what the customer picks is what gets added, and it replaces the **Credits** field.
-4. Only if a customer can have more than one Sub-Reseller account: add a **Custom Field** to the product named `Reseller username`, tick **Required** and **Show on Order Form**, so the customer types which account to top up.
+4. Add a **Custom Field** to the product named `Reseller username`, ticked **Required** and **Show on Order Form**: the customer types the panel account to top up, and the module credits it even if that account was created by hand in the panel and never went through WHMCS. This step is recommended on every top-up product: without the field the module only finds the account when the customer has exactly one Sub-Reseller service linked on that panel.
 5. Save the product.
 
 The **billing cycle** decides how often the credits are added: **One Time** means a single purchase, and a monthly cycle adds the same amount every month automatically.
 
-For the order to work, the customer needs a **Sub-Reseller** service that is active in WHMCS and linked to an account on the same panel as the top-up product. Services created by the module are linked automatically; an account that already existed is linked once with **Bulk tools → Link**. Like every Sub-Reseller feature, credit top-ups need an **Admin** key on the panel entry.
+For the order to work the module has to resolve which panel account to top up: the customer's **Sub-Reseller** service that is active in WHMCS and linked to the same panel as the top-up product, or the username the customer typed in the `Reseller username` custom field, which the module looks up on the panel. Services created by the module are linked automatically; an account that already existed is linked once with **Bulk tools → Link**. Like every Sub-Reseller feature, credit top-ups need an **Admin** key on the panel entry.
 
 **What the reseller sees:** a card called **Credit Top-Up** with the Sub-Reseller account (and a Copy button), the credits per order, the current balance and the status. There is no password, no M3U link and no EPG link on that card: the account keeps the ones it already had.
 
@@ -423,8 +423,9 @@ When you're done, click **Save Settings**.
 | **This service has no panel line yet. Provision it first.** | The service has no line created in the panel yet. | Create the service (or wait for WHMCS to finish creating it). |
 | **Could not load panel data…** | Could not read the panel information (packages, bouquets, etc.). | Check the panel connection with the Test button and make sure the API key has permissions. |
 | **Panel URL is required.** / **API key is required.** | Missing data when testing the connection. | Enter the API URL and the API key and test again. |
-| **This client has no active Sub-Reseller service on this panel to top up. Order the Sub-Reseller product first, or link the existing service with Bulk tools.** | You are selling a Credit top-up product and the customer has no Sub-Reseller account active and linked on that panel, so there is nothing to top up. The order stays pending in WHMCS. | Order the Sub-Reseller product for that customer, or link the account they already have with **Bulk tools → Link** on that panel, and press Create on the top-up service again. |
+| **This client has no active Sub-Reseller service on this panel to top up. Add a required custom field named "Reseller username" to the top-up product so the customer types the panel account, or order the Sub-Reseller product first.** | You are selling a Credit top-up product and the customer has no Sub-Reseller account active and linked on that panel, and the product has no `Reseller username` field for the customer to type the panel account in, so the module has nothing to top up. The order stays pending in WHMCS. | Add a custom field named `Reseller username` to the top-up product, ticked **Required** and **Show on Order Form**, order the Sub-Reseller product for that customer, or link the account they already have with **Bulk tools → Link** on that panel, and press Create on the top-up service again. |
 | **This client has several Sub-Reseller accounts on this panel (a, b). Add a required custom field named "Reseller username" to the top-up product so the customer chooses the account.** | The customer owns more than one Sub-Reseller account on that panel and the module will not guess which one should receive the credits. The names in brackets are the accounts it found. | Add a custom field named `Reseller username` to the top-up product, ticked **Required** and **Show on Order Form**, so the customer picks the account at checkout. |
+| **The reseller username "<value>" was not found on this panel.** | The username the customer typed in the `Reseller username` field matches neither a linked Sub-Reseller service of that customer on this panel nor any account on the panel: usually a typo, or the username does not exist on that panel. Nothing was credited. | Check the username on your panel under **Users** and correct it on the WHMCS service (or ask the customer for the exact username), then press Create again on the top-up service. |
 
 ---
 
@@ -446,7 +447,7 @@ Go to **Addons → Xtream AI Panel → Bulk tools**, choose your panel in the dr
 Yes. Add a WHMCS Configurable Option named `extra_connections` (a quantity from 0 upwards, priced per unit) to the product and the module adds it on top of the package's connections, on order and every time the customer changes it later. See "Letting customers buy extra connections" in section 6.
 
 **My resellers buy credits from my website. Can an order add credits instead of creating a new account?**
-Yes. Sell them a **Credit top-up** product: when the order is paid, the module adds the credits to the Sub-Reseller account that customer already has on the same panel. Add a configurable option named `credits` if you want to sell different package sizes, and a required custom field named `Reseller username` if a customer can own more than one account. See "Selling credit top-ups" in section 10.
+Yes. Sell them a **Credit top-up** product: when the order is paid, the module adds the credits to an existing Sub-Reseller account on the same panel, and creates nothing. Add a configurable option named `credits` if you want to sell different package sizes, and a recommended custom field named `Reseller username` so the customer types the panel account to top up: the module looks that username up on the panel, so it also works for accounts that were created by hand and never went through WHMCS. See "Selling credit top-ups" in section 10.
 
 **Can a line keep working when the service is suspended for an unpaid invoice?**
 Yes. In the product's Module Settings, set **Suspend action** to `Leave the line untouched, let it expire`. Suspending the service then does nothing to the panel: the line keeps working until its own expiry date and expires by itself. This is a per-product setting, so you can keep the default (`Disable the line on the panel`) everywhere else. See section 8.

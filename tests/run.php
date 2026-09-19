@@ -79,6 +79,7 @@ namespace WhmcsXtreamAI {
         public static $getLineResult = array();
         public static $getLineError = '';
         public static $adjustResult = '150';
+        public static $findResellerResult = null;
 
         private static function record($name, array $args)
         {
@@ -158,6 +159,13 @@ namespace WhmcsXtreamAI {
             self::record('resellerCredits', func_get_args());
 
             return self::$adjustResult;
+        }
+
+        public static function findResellerByUsername($panelId, $username)
+        {
+            self::record('findResellerByUsername', func_get_args());
+
+            return self::$findResellerResult;
         }
 
         public static function deleteLine($panelId, $lineId)
@@ -416,6 +424,7 @@ namespace {
         \WhmcsXtreamAI\PanelApi::$getLineResult = array();
         \WhmcsXtreamAI\PanelApi::$getLineError = '';
         \WhmcsXtreamAI\PanelApi::$adjustResult = '150';
+        \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
         \WhmcsXtreamAI\ServiceStore::$statuses = array();
         \WhmcsXtreamAI\ServiceStore::$actions = array();
         \WhmcsXtreamAI\ServiceStore::$checks = array();
@@ -1106,10 +1115,15 @@ namespace {
     $result = xtreamai_CreateAccount(baseParams(array('configoption5' => 'topup', 'configoption6' => '50')));
     same(
         'a top-up without a sub-reseller to top up is refused',
-        'This client has no active Sub-Reseller service on this panel to top up. Order the Sub-Reseller product first, or link the existing service with Bulk tools.',
+        'This client has no active Sub-Reseller service on this panel to top up. Add a required custom field named "Reseller username" to the top-up product so the customer types the panel account, or order the Sub-Reseller product first.',
         $result
     );
     same('a refused top-up never adjusts credits', 0, count(apiCalls('adjustResellerCredits')));
+    same(
+        'a top-up without a custom field never queries the panel by username',
+        0,
+        count(apiCalls('findResellerByUsername'))
+    );
 
     \WhmcsXtreamAI\ServiceStore::$rows = array();
     resetApi();
@@ -1147,24 +1161,88 @@ namespace {
         'Topped up +50 credits to resB (balance 150)',
         \WhmcsXtreamAI\ServiceStore::$actions ? (string) \WhmcsXtreamAI\ServiceStore::$actions[0]['action'] : null
     );
+    same(
+        'a username that matches a linked service never queries the panel',
+        0,
+        count(apiCalls('findResellerByUsername'))
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption5' => 'topup',
+        'configoption6' => '50',
+        'customfields' => array('Reseller username' => 'ghost'),
+    )));
+    same(
+        'a custom field that matches nothing on the panel is refused',
+        'The reseller username "ghost" was not found on this panel.',
+        $result
+    );
+    same('an unmatched top-up never adjusts credits', 0, count(apiCalls('adjustResellerCredits')));
+    same(
+        'the unmatched username is looked up on the panel',
+        array(1, 'ghost'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '5150', 'username' => 'panelres');
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption5' => 'topup',
+        'configoption6' => '50',
+        'customfields' => array('Reseller username' => 'panelres'),
+    )));
+    same('a username that only exists on the panel returns success', 'success', $result);
+    same(
+        'the panel account found by username receives the credits',
+        array(1, '5150', 50.0, 'WHMCS top-up service #135'),
+        apiCalls('adjustResellerCredits') ? apiCalls('adjustResellerCredits')[0]['args'] : null
+    );
+    same(
+        'the panel lookup receives the typed username',
+        array(1, 'panelres'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
+    );
+    same(
+        'the panel account found by username is recorded in the action',
+        'Topped up +50 credits to panelres (balance 150)',
+        \WhmcsXtreamAI\ServiceStore::$actions ? (string) \WhmcsXtreamAI\ServiceStore::$actions[0]['action'] : null
+    );
+    same(
+        'the service username follows the panel account found by username',
+        'panelres',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['username']
+    );
 
     \WhmcsXtreamAI\ServiceStore::$rows = array();
     resetApi();
     \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
         array('service_id' => 90, 'reseller_id' => '41', 'username' => 'resA'),
-        array('service_id' => 91, 'reseller_id' => '42', 'username' => 'resB'),
     );
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '5150', 'username' => 'panelres');
     $result = xtreamai_CreateAccount(baseParams(array(
         'configoption5' => 'topup',
         'configoption6' => '50',
-        'customfields' => array('Reseller username' => 'nope'),
+        'customfields' => array('Reseller username' => 'PanelRes'),
     )));
+    same('a differently cased panel username returns success', 'success', $result);
     same(
-        'a custom field that matches nothing is refused',
-        'The reseller username "nope" does not match any active Sub-Reseller service of this client on this panel. Accounts found: resA, resB.',
-        $result
+        'a differently cased panel username still credits the panel account',
+        array(1, '5150', 50.0, 'WHMCS top-up service #135'),
+        apiCalls('adjustResellerCredits') ? apiCalls('adjustResellerCredits')[0]['args'] : null
     );
-    same('an unmatched top-up never adjusts credits', 0, count(apiCalls('adjustResellerCredits')));
+    same(
+        'a differently cased username is looked up exactly as typed',
+        array(1, 'PanelRes'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
+    );
+    same(
+        'the panel account username from the lookup is recorded',
+        'Topped up +50 credits to panelres (balance 150)',
+        \WhmcsXtreamAI\ServiceStore::$actions ? (string) \WhmcsXtreamAI\ServiceStore::$actions[0]['action'] : null
+    );
 
     \WhmcsXtreamAI\ServiceStore::$rows = array();
     resetApi();

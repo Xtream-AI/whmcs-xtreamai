@@ -568,12 +568,16 @@ function xtreamai_topUpTarget(array $params, int $panelId): array
             }
         }
 
-        $message = 'The reseller username "' . $wanted . '" does not match any active Sub-Reseller service of this client on this panel.';
-        if ($candidates !== []) {
-            $message .= ' Accounts found: ' . implode(', ', xtreamai_topUpUsernames($candidates)) . '.';
+        $found = \WhmcsXtreamAI\PanelApi::findResellerByUsername($panelId, $wanted);
+        if ($found !== null) {
+            return [
+                'service_id' => 0,
+                'reseller_id' => (string) $found['id'],
+                'username' => (string) $found['username'],
+            ];
         }
 
-        throw new \RuntimeException($message);
+        throw new \RuntimeException('The reseller username "' . $wanted . '" was not found on this panel.');
     }
 
     if (count($candidates) === 1) {
@@ -581,7 +585,7 @@ function xtreamai_topUpTarget(array $params, int $panelId): array
     }
 
     if ($candidates === []) {
-        throw new \RuntimeException('This client has no active Sub-Reseller service on this panel to top up. Order the Sub-Reseller product first, or link the existing service with Bulk tools.');
+        throw new \RuntimeException('This client has no active Sub-Reseller service on this panel to top up. Add a required custom field named "Reseller username" to the top-up product so the customer types the panel account, or order the Sub-Reseller product first.');
     }
 
     throw new \RuntimeException('This client has several Sub-Reseller accounts on this panel (' . implode(', ', xtreamai_topUpUsernames($candidates)) . '). Add a required custom field named "Reseller username" to the top-up product so the customer chooses the account.');
