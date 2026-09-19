@@ -25,7 +25,7 @@
 {/literal}
 <div class="panel panel-default card mb-3 xtai-client-card">
     <div class="panel-heading card-header xtai-client-card__header">
-        <h3 class="panel-title card-title m-0">IPTV Line Details</h3>
+        <h3 class="panel-title card-title m-0">{if $account_type == 'topup'}Credit Top-up{else}IPTV Line Details{/if}</h3>
         {if $status}
             <span class="xtai-status-badge" id="xtai-status-badge" data-status="{$status|escape}">{$status|escape}</span>
         {/if}
@@ -33,6 +33,23 @@
     <div class="panel-body card-body" style="padding:0;">
         {if $username}
             <dl class="xtai-client-dl">
+                {if $account_type == 'topup'}
+                <div class="xtai-client-row">
+                    <dt>Sub-Reseller account</dt>
+                    <dd>
+                        <span class="xtai-client-value" id="xtai-topup-username">{$topup_username|escape}</span>
+                        <button type="button" class="btn btn-default btn-sm xtai-copy-btn" data-copy-target="xtai-topup-username" data-label="Copy">Copy</button>
+                    </dd>
+                </div>
+                <div class="xtai-client-row">
+                    <dt>Credits per order</dt>
+                    <dd><span class="xtai-client-value">{$topup_credits|escape}</span></dd>
+                </div>
+                <div class="xtai-client-row">
+                    <dt>Current balance</dt>
+                    <dd><span class="xtai-client-value" id="xtai-line-credits">{$credits|escape}</span></dd>
+                </div>
+                {else}
                 <div class="xtai-client-row">
                     <dt>Username</dt>
                     <dd>
@@ -79,6 +96,7 @@
                         <button type="button" class="btn btn-default btn-sm xtai-copy-btn" data-copy-target="xtai-line-epg" data-label="Copy">Copy</button>
                     </dd>
                 </div>
+                {/if}
                 {/if}
             </dl>
             {literal}

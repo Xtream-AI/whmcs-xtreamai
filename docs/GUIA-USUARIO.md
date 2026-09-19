@@ -352,6 +352,22 @@ No hace falta elegir Package ni Bouquets para este tipo: el módulo los ignora y
 2. Escribe un **Reason** (motivo) opcional.
 3. Pulsa **Apply** (Aplicar).
 
+### Vender recargas de créditos (credit top-ups)
+
+Un producto **Credit top-up** no crea nada nuevo: cuando se paga, **suma créditos** a una cuenta Sub-Reseller que tu cliente ya tiene en el mismo panel. Úsalo cuando tus resellers compran paquetes de créditos desde tu web.
+
+1. Crea un producto como cualquier otro y abre su pestaña **Module Settings**.
+2. Pon **Account Type** en `Credit top-up (existing Sub-Reseller)`.
+3. En **Credits**, escribe cuántos créditos suma cada pedido. Si quieres vender varios tamaños (100, 500, 1000) con un solo producto, añade en su lugar una **Opción Configurable** de WHMCS llamada `credits` (una cantidad, o un desplegable con los tres tamaños): el valor que elige el cliente es lo que se suma, y sustituye al campo **Credits**.
+4. Solo si un cliente puede tener más de una cuenta Sub-Reseller: añade al producto un **Custom Field** llamado `Reseller username`, marca **Required** y **Show on Order Form**, para que el cliente escriba qué cuenta quiere recargar.
+5. Guarda el producto.
+
+El **ciclo de facturación** decide cada cuánto se suman los créditos: **One Time** es una compra única, y un ciclo mensual suma la misma cantidad todos los meses de forma automática.
+
+Para que el pedido funcione, el cliente necesita un servicio **Sub-Reseller** activo en WHMCS y vinculado a una cuenta del mismo panel que el producto de recarga. Los servicios creados por el módulo se vinculan solos; una cuenta que ya existía se vincula una vez con **Bulk tools → Link**. Como todo lo relacionado con Sub-Reseller, las recargas de créditos necesitan una clave **Admin** en la entrada del panel.
+
+**Qué ve el reseller:** una tarjeta llamada **Credit Top-Up** con la cuenta Sub-Reseller (y un botón Copy), los créditos por pedido, el saldo actual y el estado. En esa tarjeta no hay contraseña, ni enlace M3U, ni enlace EPG: la cuenta conserva los que ya tenía.
+
 ---
 
 ## 11. Todas las pantallas del addon, una a una
@@ -409,6 +425,8 @@ Cuando termines, pulsa **Save Settings** (Guardar ajustes).
 | **This service has no panel line yet. Provision it first.** | El servicio todavía no tiene línea creada en el panel. | Crea el servicio (o espera a que WHMCS termine de crearlo). |
 | **Could not load panel data…** | No se pudo leer la información del panel (paquetes, bouquets, etc.). | Comprueba la conexión del panel con el botón Test y que la API key tenga permisos. |
 | **Panel URL is required.** / **API key is required.** | Faltan datos al probar la conexión. | Escribe la API URL y la API key y vuelve a probar. |
+| **This client has no active Sub-Reseller service on this panel to top up. Order the Sub-Reseller product first, or link the existing service with Bulk tools.** | Estás vendiendo un producto Credit top-up y el cliente no tiene ninguna cuenta Sub-Reseller activa y vinculada en ese panel, así que no hay nada que recargar. El pedido queda pendiente en WHMCS. | Pide el producto Sub-Reseller para ese cliente, o vincula la cuenta que ya tiene con **Bulk tools → Link** en ese panel, y vuelve a pulsar Create en el servicio de recarga. |
+| **This client has several Sub-Reseller accounts on this panel (a, b). Add a required custom field named "Reseller username" to the top-up product so the customer chooses the account.** | El cliente tiene más de una cuenta Sub-Reseller en ese panel y el módulo no adivina a cuál hay que acreditar los créditos. Los nombres entre paréntesis son las cuentas que encontró. | Añade al producto de recarga un custom field llamado `Reseller username`, marcado **Required** y **Show on Order Form**, para que el cliente elija la cuenta al hacer el pedido. |
 
 ---
 
@@ -428,6 +446,9 @@ Entra en **Addons → Xtream AI Panel → Bulk tools**, elige tu panel en el des
 
 **¿Mis clientes pueden elegir cuántas conexiones quieren?**
 Sí. Añade al producto una Opción Configurable de WHMCS llamada `extra_connections` (una cantidad desde 0, con precio por unidad) y el módulo la suma a las conexiones del paquete, en el pedido y cada vez que el cliente la cambie después. Mira "Dejar que el cliente compre conexiones extra" en la sección 6.
+
+**Mis resellers compran créditos desde mi web. ¿Puede un pedido sumar créditos en vez de crear una cuenta nueva?**
+Sí. Véndeles un producto **Credit top-up**: cuando se paga el pedido, el módulo suma los créditos a la cuenta Sub-Reseller que ese cliente ya tiene en el mismo panel. Añade una opción configurable llamada `credits` si quieres vender distintos tamaños de paquete, y un custom field obligatorio llamado `Reseller username` si un cliente puede tener más de una cuenta. Mira "Vender recargas de créditos" en la sección 10.
 
 **¿Una línea puede seguir funcionando si el servicio se suspende por una factura impaga?**
 Sí. En los Module Settings del producto pon el **Suspend action** en `Leave the line untouched, let it expire`. Suspender el servicio entonces no hace nada en el panel: la línea sigue funcionando hasta su propia fecha de vencimiento y después vence sola. Es una opción por producto, así que puedes dejar el valor por defecto (`Disable the line on the panel`) en todos los demás. Mira la sección 8.

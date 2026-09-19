@@ -26,6 +26,36 @@ final class ServiceStore
 
     
 
+    public static function resellerServicesForClient(int $userId, int $panelId): array
+    {
+        $rows = Capsule::table(self::TABLE . ' as s')
+            ->join('tblhosting as h', 'h.id', '=', 's.service_id')
+            ->join('tblproducts as p', 'p.id', '=', 'h.packageid')
+            ->where('h.userid', $userId)
+            ->where('p.servertype', 'xtreamai')
+            ->where('s.panel_id', $panelId)
+            ->whereNotNull('s.panel_account_id')
+            ->where('s.panel_account_id', '<>', '')
+            ->where('h.domainstatus', 'Active')
+            ->whereRaw("LOWER(TRIM(p.configoption5)) = 'reseller'")
+            ->orderBy('h.id', 'asc')
+            ->select(['s.service_id', 's.panel_account_id', 's.username'])
+            ->get();
+
+        $out = [];
+        foreach ($rows as $row) {
+            $out[] = [
+                'service_id' => (int) $row->service_id,
+                'reseller_id' => (string) $row->panel_account_id,
+                'username' => (string) $row->username,
+            ];
+        }
+
+        return $out;
+    }
+
+    
+
     public static function link(
         int $serviceId,
         int $panelId,

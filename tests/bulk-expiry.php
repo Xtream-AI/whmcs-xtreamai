@@ -288,6 +288,16 @@ namespace {
         same('the raw product column row never calls the module', array(), $GLOBALS['moduleCalls']);
 
         same(
+            'a Credit top-up product is skipped',
+            array('skipped_top_up', 'Credit top-up product: no line expiry to set.'),
+            xtreamai_bulk_expiry_outcome(
+                array('service_id' => 135, 'type_option' => 'topup', 'nextduedate' => '2026-10-01'),
+                'testRunModule'
+            )
+        );
+        same('a Credit top-up row never calls the module', array(), $GLOBALS['moduleCalls']);
+
+        same(
             'an empty next due date is skipped',
             array('skipped_no_due_date', 'The service has no next due date in WHMCS.'),
             xtreamai_bulk_expiry_outcome(

@@ -115,7 +115,7 @@ function xtreamai_ConfigOptions()
 
     $bouquetDescription .= xtreamai_bouquetPicker($bouquets);
 
-    $accountTypeDescription = 'Choose the account type this product provisions. Sub-Reseller accounts use the Credits value instead of a package/bouquet and ignore those fields.';
+    $accountTypeDescription = 'Choose the account type this product provisions. Sub-Reseller accounts use the Credits value instead of a package/bouquet and ignore those fields. Credit top-up adds the Credits value to a Sub-Reseller account the same client already has instead of creating a new one.';
     $accountTypeDescription .= xtreamai_accountTypeVisibility();
 
     return [
@@ -147,7 +147,7 @@ function xtreamai_ConfigOptions()
         'account_type' => [
             'FriendlyName' => 'Account Type',
             'Type' => 'dropdown',
-            'Options' => ['line' => 'Line (default)', 'reseller' => 'Sub-Reseller'],
+            'Options' => ['line' => 'Line (default)', 'reseller' => 'Sub-Reseller', 'topup' => 'Credit top-up (existing Sub-Reseller)'],
             'Default' => 'line',
             'Description' => $accountTypeDescription,
         ],
@@ -156,7 +156,7 @@ function xtreamai_ConfigOptions()
             'Type' => 'text',
             'Size' => '10',
             'Default' => '0',
-            'Description' => 'Credits assigned on creation and on each renewal (Sub-Reseller accounts only)',
+            'Description' => 'Credits assigned on creation and on each renewal (Sub-Reseller accounts), or added to the existing account on each order and renewal (Credit top-up). For Credit top-up products a WHMCS configurable option named credits replaces this value.',
         ],
         'max_connections' => [
             'FriendlyName' => 'Max Connections',
@@ -284,8 +284,10 @@ function xtreamai_accountTypeVisibility(): string
             $labelTd.toggle(show);
         }
         function apply() {
-            var isReseller = String($type.val() || '').toLowerCase() === 'reseller';
-            toggleCells($credits, isReseller);
+            var type = String($type.val() || '').toLowerCase();
+            var isReseller = type === 'reseller';
+            var isTopUp = type === 'topup';
+            toggleCells($credits, isReseller || isTopUp);
             if ($group.length) { toggleCells($group, isReseller); }
         }
         $type.on('change.xtaiAccount', apply);
@@ -482,8 +484,14 @@ function xtreamai_parsePanelPackage(array $params): array
 
 function xtreamai_accountType(array $params): string
 {
-    $type = (string) ($params['configoption5'] ?? ($params['configoptions']['account_type'] ?? ''));
-    return strtolower(trim($type)) === 'reseller' ? 'reseller' : 'line';
+    $type = strtolower(trim((string) ($params['configoption5'] ?? ($params['configoptions']['account_type'] ?? ''))));
+    if ($type === 'reseller') {
+        return 'reseller';
+    }
+    if ($type === 'topup') {
+        return 'topup';
+    }
+    return 'line';
 }
 
 function xtreamai_resellerCredits(array $params): float
@@ -494,6 +502,89 @@ function xtreamai_resellerCredits(array $params): float
     }
     $credits = (float) $raw;
     return $credits > 0 ? $credits : 0.0;
+}
+
+function xtreamai_formatCredits(float $credits): string
+{
+    return rtrim(rtrim(number_format($credits, 2, '.', ''), '0'), '.');
+}
+
+function xtreamai_topUpCredits(array $params): float
+{
+    $option = xtreamai_configurableOptionInt($params, ['credits', 'credit_amount', 'topup_credits']);
+    if ($option !== null && $option > 0) {
+        return (float) $option;
+    }
+
+    $credits = xtreamai_resellerCredits($params);
+    if ($credits > 0) {
+        return $credits;
+    }
+
+    throw new \RuntimeException('No credit amount configured for this top-up product. Set Credits on the product\'s Module Settings tab or add a configurable option named credits.');
+}
+
+function xtreamai_topUpUsernameField(array $params): string
+{
+    $fields = $params['customfields'] ?? null;
+    if (!is_array($fields)) {
+        return '';
+    }
+
+    foreach ($fields as $name => $value) {
+        $key = xtreamai_configurableOptionKey((string) $name);
+        if ($key !== 'reseller_username' && $key !== 'panel_username' && $key !== 'sub_reseller_username') {
+            continue;
+        }
+        if (is_array($value)) {
+            $value = reset($value);
+        }
+
+        return trim((string) $value);
+    }
+
+    return '';
+}
+
+function xtreamai_topUpUsernames(array $candidates): array
+{
+    $names = [];
+    foreach ($candidates as $candidate) {
+        $names[] = (string) $candidate['username'];
+    }
+
+    return $names;
+}
+
+function xtreamai_topUpTarget(array $params, int $panelId): array
+{
+    $candidates = \WhmcsXtreamAI\ServiceStore::resellerServicesForClient((int) ($params['userid'] ?? 0), $panelId);
+    $wanted = xtreamai_topUpUsernameField($params);
+
+    if ($wanted !== '') {
+        foreach ($candidates as $candidate) {
+            if (strcasecmp((string) $candidate['username'], $wanted) === 0) {
+                return $candidate;
+            }
+        }
+
+        $message = 'The reseller username "' . $wanted . '" does not match any active Sub-Reseller service of this client on this panel.';
+        if ($candidates !== []) {
+            $message .= ' Accounts found: ' . implode(', ', xtreamai_topUpUsernames($candidates)) . '.';
+        }
+
+        throw new \RuntimeException($message);
+    }
+
+    if (count($candidates) === 1) {
+        return $candidates[0];
+    }
+
+    if ($candidates === []) {
+        throw new \RuntimeException('This client has no active Sub-Reseller service on this panel to top up. Order the Sub-Reseller product first, or link the existing service with Bulk tools.');
+    }
+
+    throw new \RuntimeException('This client has several Sub-Reseller accounts on this panel (' . implode(', ', xtreamai_topUpUsernames($candidates)) . '). Add a required custom field named "Reseller username" to the top-up product so the customer chooses the account.');
 }
 
 function xtreamai_panelIdForService(array $params): int
@@ -1014,6 +1105,13 @@ function xtreamai_refreshFromPanel(array $params, bool $force = false): array
             return $out;
         }
 
+        if (xtreamai_accountType($params) === 'topup') {
+            $out['source'] = 'not_applicable';
+            $out['error'] = 'Credit top-up product: no panel line to read.';
+
+            return $out;
+        }
+
         $row = \WhmcsXtreamAI\ServiceStore::find($serviceId);
         if (!$row || empty($row->panel_account_id)) {
             $out['source'] = 'unlinked';
@@ -1126,6 +1224,10 @@ function xtreamai_CreateAccount(array $params)
             return xtreamai_createResellerAccount($params);
         }
 
+        if (xtreamai_accountType($params) === 'topup') {
+            return xtreamai_createTopUp($params);
+        }
+
         $panelId = xtreamai_requirePanelId($params);
         $packageId = xtreamai_packageIdForService($params);
         if ($packageId < 1) {
@@ -1212,9 +1314,56 @@ function xtreamai_createResellerAccount(array $params): string
     return 'success';
 }
 
+function xtreamai_createTopUp(array $params): string
+{
+    $panelId = xtreamai_requirePanelId($params);
+    $serviceId = (int) ($params['serviceid'] ?? 0);
+    if ($serviceId < 1) {
+        throw new \RuntimeException('Invalid service id.');
+    }
+
+    if (\WhmcsXtreamAI\PanelApi::keyType($panelId) !== 'admin') {
+        throw new \RuntimeException('Credit top-ups require an admin panel key on this panel entry.');
+    }
+
+    $row = \WhmcsXtreamAI\ServiceStore::find($serviceId);
+    if ($row && !empty($row->panel_account_id)) {
+        $lastAction = trim((string) ($row->last_action ?? ''));
+        if (strpos($lastAction, 'Topped up') === 0) {
+            throw new \RuntimeException('This top-up was already applied (' . $lastAction . '). Use a renewal or the Sub-Resellers tab to add more credits.');
+        }
+    }
+
+    $credits = xtreamai_topUpCredits($params);
+    $target = xtreamai_topUpTarget($params, $panelId);
+
+    $balance = \WhmcsXtreamAI\PanelApi::adjustResellerCredits(
+        $panelId,
+        $target['reseller_id'],
+        $credits,
+        'WHMCS top-up service #' . $serviceId
+    );
+
+    \WhmcsXtreamAI\ServiceStore::link($serviceId, $panelId, $target['reseller_id'], $target['username'], 0);
+    \WhmcsXtreamAI\ServiceStore::updateStatus($serviceId, 'Active');
+    \WhmcsXtreamAI\ServiceStore::recordAction(
+        $serviceId,
+        'Topped up +' . xtreamai_formatCredits($credits) . ' credits to ' . $target['username']
+        . ($balance !== '' ? ' (balance ' . $balance . ')' : '')
+    );
+
+    xtreamai_updateHostingCredentials($serviceId, $target['username'], '');
+
+    return 'success';
+}
+
 function xtreamai_SuspendAccount(array $params)
 {
     return xtreamai_execute($params, 'suspend', static function (array $params): string {
+        if (xtreamai_accountType($params) === 'topup') {
+            \WhmcsXtreamAI\ServiceStore::updateStatus((int) ($params['serviceid'] ?? 0), 'Suspended');
+            return 'success';
+        }
         if (xtreamai_accountType($params) !== 'reseller' && xtreamai_suspendAction($params) === 'none') {
             \WhmcsXtreamAI\ServiceStore::updateStatus((int) ($params['serviceid'] ?? 0), 'Suspended');
             return 'success';
@@ -1234,6 +1383,10 @@ function xtreamai_SuspendAccount(array $params)
 function xtreamai_UnsuspendAccount(array $params)
 {
     return xtreamai_execute($params, 'unsuspend', static function (array $params): string {
+        if (xtreamai_accountType($params) === 'topup') {
+            \WhmcsXtreamAI\ServiceStore::updateStatus((int) ($params['serviceid'] ?? 0), 'Active');
+            return 'success';
+        }
         if (xtreamai_accountType($params) !== 'reseller' && xtreamai_suspendAction($params) === 'none') {
             \WhmcsXtreamAI\ServiceStore::updateStatus((int) ($params['serviceid'] ?? 0), 'Active');
             return 'success';
@@ -1253,6 +1406,10 @@ function xtreamai_UnsuspendAccount(array $params)
 function xtreamai_TerminateAccount(array $params)
 {
     return xtreamai_execute($params, 'terminate', static function (array $params): string {
+        if (xtreamai_accountType($params) === 'topup') {
+            \WhmcsXtreamAI\ServiceStore::unlink((int) ($params['serviceid'] ?? 0));
+            return 'success';
+        }
         $panelId = xtreamai_requirePanelId($params);
         $lineId = xtreamai_lineIdForService($params);
         if (xtreamai_accountType($params) === 'reseller') {
@@ -1284,6 +1441,28 @@ function xtreamai_Renew(array $params)
                 );
             }
             \WhmcsXtreamAI\ServiceStore::updateStatus($serviceId, 'Active');
+            return 'success';
+        }
+
+        if (xtreamai_accountType($params) === 'topup') {
+            if (\WhmcsXtreamAI\PanelApi::keyType($panelId) !== 'admin') {
+                throw new \RuntimeException('Credit top-ups require an admin panel key on this panel entry.');
+            }
+            $credits = xtreamai_topUpCredits($params);
+            $balance = \WhmcsXtreamAI\PanelApi::adjustResellerCredits(
+                $panelId,
+                $lineId,
+                $credits,
+                'WHMCS top-up renewal service #' . $serviceId
+            );
+            $row = \WhmcsXtreamAI\ServiceStore::find($serviceId);
+            $username = ($row && !empty($row->username)) ? (string) $row->username : $lineId;
+            \WhmcsXtreamAI\ServiceStore::updateStatus($serviceId, 'Active');
+            \WhmcsXtreamAI\ServiceStore::recordAction(
+                $serviceId,
+                'Topped up +' . xtreamai_formatCredits($credits) . ' credits to ' . $username
+                . ($balance !== '' ? ' (balance ' . $balance . ')' : '')
+            );
             return 'success';
         }
 
@@ -1359,6 +1538,9 @@ function xtreamai_Renew(array $params)
 function xtreamai_ChangePassword(array $params)
 {
     return xtreamai_execute($params, 'change_password', static function (array $params): string {
+        if (xtreamai_accountType($params) === 'topup') {
+            throw new \RuntimeException('Password changes are not supported for Credit top-up products: the password belongs to the Sub-Reseller service.');
+        }
         $panelId = xtreamai_requirePanelId($params);
         $lineId = xtreamai_lineIdForService($params);
         $supplied = preg_replace('/[^A-Za-z0-9]/', '', (string) ($params['password'] ?? ''));
@@ -1375,7 +1557,8 @@ function xtreamai_ChangePassword(array $params)
 
 function xtreamai_AdminCustomButtonArray(array $params)
 {
-    if (xtreamai_accountType($params) === 'reseller') {
+    $type = xtreamai_accountType($params);
+    if ($type === 'reseller' || $type === 'topup') {
         return [];
     }
     return [
@@ -1391,6 +1574,9 @@ function xtreamai_sync(array $params)
     return xtreamai_execute($params, 'sync', static function (array $params): string {
         if (xtreamai_accountType($params) === 'reseller') {
             throw new \RuntimeException('Sync is not supported for Sub-Reseller products.');
+        }
+        if (xtreamai_accountType($params) === 'topup') {
+            throw new \RuntimeException('Sync is not supported for Credit top-up products.');
         }
         $serviceId = (int) ($params['serviceid'] ?? 0);
         $panelId = xtreamai_requirePanelId($params);
@@ -1433,6 +1619,9 @@ function xtreamai_refresh(array $params)
         if (xtreamai_accountType($params) === 'reseller') {
             throw new \RuntimeException('Refresh from panel is not supported for Sub-Reseller products.');
         }
+        if (xtreamai_accountType($params) === 'topup') {
+            throw new \RuntimeException('Refresh from panel is not supported for Credit top-up products.');
+        }
         $serviceId = (int) ($params['serviceid'] ?? 0);
         $check = xtreamai_refreshFromPanel($params, true);
 
@@ -1458,6 +1647,9 @@ function xtreamai_push_expiry(array $params)
     return xtreamai_execute($params, 'push_expiry', static function (array $params): string {
         if (xtreamai_accountType($params) === 'reseller') {
             throw new \RuntimeException('Setting the panel expiry is not supported for Sub-Reseller products.');
+        }
+        if (xtreamai_accountType($params) === 'topup') {
+            throw new \RuntimeException('Expiry alignment is not supported for Credit top-up products.');
         }
 
         $serviceId = (int) ($params['serviceid'] ?? 0);
@@ -1498,6 +1690,9 @@ function xtreamai_pull_expiry(array $params)
         if (xtreamai_accountType($params) === 'reseller') {
             throw new \RuntimeException('Copying the panel expiry is not supported for Sub-Reseller products.');
         }
+        if (xtreamai_accountType($params) === 'topup') {
+            throw new \RuntimeException('Expiry alignment is not supported for Credit top-up products.');
+        }
         if (xtreamai_hidesNextDueDate((string) ($params['billingcycle'] ?? ''))) {
             throw new \RuntimeException('This product has a one-time or free billing cycle: WHMCS keeps no next due date to set.');
         }
@@ -1530,6 +1725,9 @@ function xtreamai_ChangePackage(array $params)
     return xtreamai_execute($params, 'change_package', static function (array $params): string {
         if (xtreamai_accountType($params) === 'reseller') {
             throw new \RuntimeException('Package changes are not supported for Sub-Reseller products.');
+        }
+        if (xtreamai_accountType($params) === 'topup') {
+            throw new \RuntimeException('Package changes are not supported for Credit top-up products.');
         }
 
         $panelId = xtreamai_requirePanelId($params);
@@ -1602,9 +1800,48 @@ function xtreamai_AdminServicesTabFields(array $params)
         }
 
         $row = \WhmcsXtreamAI\ServiceStore::find($serviceId);
+        $isTopUp = xtreamai_accountType($params) === 'topup';
+
         if (!$row) {
+            if ($isTopUp) {
+                return [
+                    'Top-up target' => xtreamai_esc('Not applied yet. The top-up runs when the service is created.'),
+                ];
+            }
+
             return [
                 'Panel line' => xtreamai_esc('Not linked yet. Provision the service or use Bulk tools > Link existing services.'),
+            ];
+        }
+
+        if ($isTopUp) {
+            $topUpCredits = '-';
+            try {
+                $topUpCredits = xtreamai_formatCredits(xtreamai_topUpCredits($params));
+            } catch (\Throwable $e) {
+                $topUpCredits = '-';
+            }
+
+            $balance = '-';
+            if (!empty($row->panel_id) && !empty($row->panel_account_id)) {
+                try {
+                    $balance = \WhmcsXtreamAI\PanelApi::resellerCredits(
+                        (int) $row->panel_id,
+                        (string) $row->panel_account_id
+                    );
+                } catch (\Throwable $e) {
+                    $balance = '-';
+                }
+            }
+
+            return [
+                'Product' => xtreamai_esc('Credit top-up'),
+                'Sub-Reseller account' => xtreamai_esc(
+                    (string) $row->username . ' (id ' . (string) $row->panel_account_id . ')'
+                ),
+                'Credits per order' => xtreamai_esc($topUpCredits),
+                'Current balance' => xtreamai_esc($balance),
+                'Last module action' => xtreamai_esc(xtreamai_lastActionLabel($row)),
             ];
         }
 
@@ -1701,7 +1938,10 @@ function xtreamai_ClientArea(array $params)
     $credits = '';
     $connections = [];
     $connectionsCount = 0;
+    $topupUsername = '';
+    $topupCredits = '';
     $accountType = xtreamai_accountType($params);
+    $row = null;
 
     try {
         xtreamai_requireAddon();
@@ -1721,7 +1961,7 @@ function xtreamai_ClientArea(array $params)
             if (!empty($row->expires_at)) {
                 $expires = xtreamai_formatDate((string) $row->expires_at);
             }
-            if (!empty($row->panel_id)) {
+            if ($accountType !== 'topup' && !empty($row->panel_id)) {
                 $panel = \WhmcsXtreamAI\PanelStore::find((int) $row->panel_id);
                 if ($panel && !empty($panel->m3u_url)) {
                     $m3uUrl = (string) $panel->m3u_url;
@@ -1732,7 +1972,7 @@ function xtreamai_ClientArea(array $params)
             }
         }
 
-        if ($m3uUrl === '' || $epgUrl === '') {
+        if ($accountType !== 'topup' && ($m3uUrl === '' || $epgUrl === '')) {
             $panelId = xtreamai_panelIdForService($params);
             if ($panelId > 0) {
                 $panel = \WhmcsXtreamAI\PanelStore::find($panelId);
@@ -1752,6 +1992,27 @@ function xtreamai_ClientArea(array $params)
                 $credits = \WhmcsXtreamAI\PanelApi::resellerCredits($panelId, $lineId);
             } catch (\Throwable $e) {
                 $credits = '';
+            }
+        }
+
+        if ($accountType === 'topup') {
+            if ($row && !empty($row->username)) {
+                $topupUsername = (string) $row->username;
+            }
+            if ($row && !empty($row->panel_id) && !empty($row->panel_account_id)) {
+                try {
+                    $credits = \WhmcsXtreamAI\PanelApi::resellerCredits(
+                        (int) $row->panel_id,
+                        (string) $row->panel_account_id
+                    );
+                } catch (\Throwable $e) {
+                    $credits = '';
+                }
+            }
+            try {
+                $topupCredits = xtreamai_formatCredits(xtreamai_topUpCredits($params));
+            } catch (\Throwable $e) {
+                $topupCredits = '';
             }
         }
 
@@ -1790,6 +2051,8 @@ function xtreamai_ClientArea(array $params)
             'epg_url' => $epgUrl,
             'credits' => $credits,
             'account_type' => $accountType,
+            'topup_username' => $topupUsername,
+            'topup_credits' => $topupCredits,
             'connections' => $connections,
             'connections_count' => $connectionsCount,
         ],

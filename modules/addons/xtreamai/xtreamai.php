@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.7.1',
+        'version'     => '1.8.0',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -651,6 +651,9 @@ function xtreamai_ajax_bulk_link()
                 if (strtolower(trim((string) $row->type_option)) === 'reseller') {
                     $outcome = 'skipped_sub_reseller';
                     $message = 'Sub-Reseller product: nothing to link.';
+                } elseif (strtolower(trim((string) $row->type_option)) === 'topup') {
+                    $outcome = 'skipped_top_up';
+                    $message = 'Credit top-up product: nothing to link.';
                 } else {
                     $servicePanelId = (int) $row->panel_option;
                     if ($servicePanelId < 1) {
@@ -828,11 +831,15 @@ function xtreamai_ajax_bulk_sync()
                     $outcome = 'skipped_sub_reseller';
                     $message = 'Sub-Reseller product: nothing to sync.';
                     $result  = null;
+                } elseif (strtolower(trim((string) $row->type_option)) === 'topup') {
+                    $outcome = 'skipped_top_up';
+                    $message = 'Credit top-up product: nothing to sync.';
+                    $result  = null;
                 } else {
                     $result = localAPI('ModuleCustom', ['accountid' => $serviceId, 'serviceid' => $serviceId, 'func_name' => 'sync'], $adminUsername);
                 }
 
-                if ($outcome !== 'skipped_sub_reseller') {
+                if ($outcome !== 'skipped_sub_reseller' && $outcome !== 'skipped_top_up') {
                     if (is_array($result) && isset($result['result']) && $result['result'] === 'success') {
                         $outcome = 'synced';
                         $message = '';
@@ -1022,6 +1029,10 @@ function xtreamai_bulk_expiry_outcome(array $row, callable $runModule): array
 
     if ($type === 'reseller') {
         return ['skipped_sub_reseller', 'Sub-Reseller product: no line expiry to set.'];
+    }
+
+    if ($type === 'topup') {
+        return ['skipped_top_up', 'Credit top-up product: no line expiry to set.'];
     }
 
     $nextDue = trim((string) ($row['nextduedate'] ?? ''));
@@ -2168,9 +2179,9 @@ JS;
     var urls = URLS_PLACEHOLDER;
     var outcomes = {
         index: ['indexed', 'total'],
-        link: ['linked_by_tag', 'linked_by_username', 'not_found', 'ambiguous_tag', 'skipped_sub_reseller', 'skipped_other_panel', 'error'],
-        sync: ['synced', 'skipped_suspended', 'skipped_sub_reseller', 'error'],
-        expiry: ['aligned', 'skipped_no_due_date', 'skipped_suspended', 'skipped_sub_reseller', 'error']
+        link: ['linked_by_tag', 'linked_by_username', 'not_found', 'ambiguous_tag', 'skipped_sub_reseller', 'skipped_top_up', 'skipped_other_panel', 'error'],
+        sync: ['synced', 'skipped_suspended', 'skipped_sub_reseller', 'skipped_top_up', 'error'],
+        expiry: ['aligned', 'skipped_no_due_date', 'skipped_suspended', 'skipped_sub_reseller', 'skipped_top_up', 'error']
     };
     var labels = {
         indexed: 'Lines indexed',
@@ -2180,6 +2191,7 @@ JS;
         not_found: 'Not found',
         ambiguous_tag: 'Ambiguous tag',
         skipped_sub_reseller: 'Sub-Reseller skipped',
+        skipped_top_up: 'Credit top-up skipped',
         skipped_other_panel: 'Other panel skipped',
         skipped_suspended: 'Skipped (Suspended)',
         skipped_no_due_date: 'Skipped (no due date)',

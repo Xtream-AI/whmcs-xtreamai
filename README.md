@@ -270,11 +270,14 @@ admin reloads the page (there is no automatic reload).
 3. In WHMCS, open **Products/Services → your product → Module Settings**
    and pick **Xtream AI Panel** in the Module Name dropdown.
 4. Fill the config options: Panel, Package Type, Package, Bouquets,
-   Account Type, Credits (for Sub-Reseller products), Max Connections
-   (optional, admin key only), Sub-Reseller Member Group ID (required
-   for Sub-Reseller products on Admin keys; numeric id of the panel
-   member group new Sub-Reseller accounts will belong to) and Suspend
-   action (see "Suspending without touching the panel" below).
+   Account Type (Line, Sub-Reseller or Credit top-up), Credits (for
+   Sub-Reseller and Credit top-up products: the balance a Sub-Reseller
+   account starts with, or the amount each top-up order adds; a
+   configurable option named `credits` on the product replaces it),
+   Max Connections (optional, admin key only), Sub-Reseller Member Group
+   ID (required for Sub-Reseller products on Admin keys; numeric id of
+   the panel member group new Sub-Reseller accounts will belong to) and
+   Suspend action (see "Suspending without touching the panel" below).
 5. Save the product.
 
 The **Max Connections** field caps the number of concurrent connections
@@ -454,6 +457,21 @@ Keep the WHMCS billing cycle aligned with the panel package duration.
 Renewals sync WHMCS's next due date to the panel expiry, so a 30-day
 package on a monthly cycle drifts a day or two per renewal and a 1-year
 package on a monthly cycle jumps a year ahead.
+
+### Credit top-up
+
+A third account type, **Credit top-up (existing Sub-Reseller)**, sells credits
+instead of access: on payment, and again on every renewal, the module adds the
+configured amount to a Sub-Reseller account the same WHMCS client already has
+on that panel, and creates nothing. The amount comes from a configurable
+option named `credits` (also `credit_amount` or `topup_credits`) or, when the
+product has none, from its **Credits** field, so one product can sell 100, 500
+and 1000 credit packages. The destination is the client's active Sub-Reseller
+service linked to the same panel; when the client owns more than one, add a
+required custom field named `Reseller username` so the customer chooses the
+account. Suspend and Unsuspend only change the WHMCS service state and
+Terminate only unlinks it, so the balance is never touched. Needs an admin
+key, like every Sub-Reseller feature.
 
 ## Security notes
 

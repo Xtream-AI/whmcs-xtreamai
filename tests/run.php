@@ -78,6 +78,7 @@ namespace WhmcsXtreamAI {
         public static $updateLineResult = array();
         public static $getLineResult = array();
         public static $getLineError = '';
+        public static $adjustResult = '150';
 
         private static function record($name, array $args)
         {
@@ -148,6 +149,15 @@ namespace WhmcsXtreamAI {
         public static function adjustResellerCredits($panelId, $lineId, $credits, $reason)
         {
             self::record('adjustResellerCredits', func_get_args());
+
+            return self::$adjustResult;
+        }
+
+        public static function resellerCredits($panelId, $lineId)
+        {
+            self::record('resellerCredits', func_get_args());
+
+            return self::$adjustResult;
         }
 
         public static function deleteLine($panelId, $lineId)
@@ -203,6 +213,8 @@ namespace WhmcsXtreamAI {
         public static $statuses = array();
         public static $actions = array();
         public static $checks = array();
+        public static $clientResellers = array();
+        public static $resellerLookups = array();
 
         public static function find($serviceId)
         {
@@ -259,6 +271,16 @@ namespace WhmcsXtreamAI {
 
         public static function link($serviceId, $panelId, $panelAccountId, $username, $packageId)
         {
+        }
+
+        public static function resellerServicesForClient($userId, $panelId)
+        {
+            self::$resellerLookups[] = array(
+                'user_id' => $userId,
+                'panel_id' => $panelId,
+            );
+
+            return self::$clientResellers;
         }
 
         public static function setPackageId($serviceId, $packageId)
@@ -393,9 +415,12 @@ namespace {
         \WhmcsXtreamAI\PanelApi::$updateLineResult = array();
         \WhmcsXtreamAI\PanelApi::$getLineResult = array();
         \WhmcsXtreamAI\PanelApi::$getLineError = '';
+        \WhmcsXtreamAI\PanelApi::$adjustResult = '150';
         \WhmcsXtreamAI\ServiceStore::$statuses = array();
         \WhmcsXtreamAI\ServiceStore::$actions = array();
         \WhmcsXtreamAI\ServiceStore::$checks = array();
+        \WhmcsXtreamAI\ServiceStore::$clientResellers = array();
+        \WhmcsXtreamAI\ServiceStore::$resellerLookups = array();
         \WhmcsXtreamAI\Settings::$values = array();
         $GLOBALS['moduleLog'] = array();
     }
@@ -1014,6 +1039,318 @@ namespace {
         isset($fields['Panel line']) ? $fields['Panel line'] : null
     );
 
+    section('I. Credit top-up account type');
+
+    $accountOptions = xtreamai_ConfigOptions();
+    same('the account type helper reads a credit top-up', 'topup', xtreamai_accountType(array('configoption5' => 'TopUp ')));
+    same('the account type helper still reads a sub-reseller', 'reseller', xtreamai_accountType(array('configoption5' => ' reseller ')));
+    same('the account type helper falls back to a line', 'line', xtreamai_accountType(array('configoption5' => 'x')));
+    same(
+        'the account type dropdown offers the credit top-up',
+        'Credit top-up (existing Sub-Reseller)',
+        $accountOptions['account_type']['Options']['topup']
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 90, 'reseller_id' => '41', 'username' => 'resA'),
+    );
+    $result = xtreamai_CreateAccount(baseParams(array('configoption5' => 'topup', 'configoption6' => '50')));
+    same('a credit top-up order returns success', 'success', $result);
+    same(
+        'the top-up adds the product credits to the only candidate',
+        array(1, '41', 50.0, 'WHMCS top-up service #135'),
+        apiCalls('adjustResellerCredits') ? apiCalls('adjustResellerCredits')[0]['args'] : null
+    );
+    same(
+        'the top-up resolves the target among the services of the client',
+        array(array('user_id' => 44, 'panel_id' => 1)),
+        \WhmcsXtreamAI\ServiceStore::$resellerLookups
+    );
+    same(
+        'the top-up marks the service active',
+        'Active',
+        \WhmcsXtreamAI\ServiceStore::$statuses ? \WhmcsXtreamAI\ServiceStore::$statuses[0]['status'] : null
+    );
+    same(
+        'the top-up records the credited account and the balance',
+        'Topped up +50 credits to resA (balance 150)',
+        \WhmcsXtreamAI\ServiceStore::$actions ? (string) \WhmcsXtreamAI\ServiceStore::$actions[0]['action'] : null
+    );
+    same(
+        'the service username follows the target account',
+        'resA',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['username']
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 90, 'reseller_id' => '41', 'username' => 'resA'),
+    );
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption5' => 'topup',
+        'configoption6' => '50',
+        'configoptions' => array('credits|Credits' => '200'),
+    )));
+    same('a top-up with a credits configurable option returns success', 'success', $result);
+    same(
+        'the configurable option replaces the product credits',
+        200.0,
+        apiCalls('adjustResellerCredits') ? apiCalls('adjustResellerCredits')[0]['args'][2] : null
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array('configoption5' => 'topup', 'configoption6' => '50')));
+    same(
+        'a top-up without a sub-reseller to top up is refused',
+        'This client has no active Sub-Reseller service on this panel to top up. Order the Sub-Reseller product first, or link the existing service with Bulk tools.',
+        $result
+    );
+    same('a refused top-up never adjusts credits', 0, count(apiCalls('adjustResellerCredits')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 90, 'reseller_id' => '41', 'username' => 'resA'),
+        array('service_id' => 91, 'reseller_id' => '42', 'username' => 'resB'),
+    );
+    $result = xtreamai_CreateAccount(baseParams(array('configoption5' => 'topup', 'configoption6' => '50')));
+    same(
+        'several sub-resellers without a custom field are refused',
+        'This client has several Sub-Reseller accounts on this panel (resA, resB). Add a required custom field named "Reseller username" to the top-up product so the customer chooses the account.',
+        $result
+    );
+    same('an ambiguous top-up never adjusts credits', 0, count(apiCalls('adjustResellerCredits')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 90, 'reseller_id' => '41', 'username' => 'resA'),
+        array('service_id' => 91, 'reseller_id' => '42', 'username' => 'resB'),
+    );
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption5' => 'topup',
+        'configoption6' => '50',
+        'customfields' => array('Reseller username' => 'resB'),
+    )));
+    same('a top-up with a chosen reseller returns success', 'success', $result);
+    same(
+        'the chosen reseller receives the credits',
+        array(1, '42', 50.0, 'WHMCS top-up service #135'),
+        apiCalls('adjustResellerCredits') ? apiCalls('adjustResellerCredits')[0]['args'] : null
+    );
+    same(
+        'the chosen reseller is recorded in the action',
+        'Topped up +50 credits to resB (balance 150)',
+        \WhmcsXtreamAI\ServiceStore::$actions ? (string) \WhmcsXtreamAI\ServiceStore::$actions[0]['action'] : null
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 90, 'reseller_id' => '41', 'username' => 'resA'),
+        array('service_id' => 91, 'reseller_id' => '42', 'username' => 'resB'),
+    );
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption5' => 'topup',
+        'configoption6' => '50',
+        'customfields' => array('Reseller username' => 'nope'),
+    )));
+    same(
+        'a custom field that matches nothing is refused',
+        'The reseller username "nope" does not match any active Sub-Reseller service of this client on this panel. Accounts found: resA, resB.',
+        $result
+    );
+    same('an unmatched top-up never adjusts credits', 0, count(apiCalls('adjustResellerCredits')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 90, 'reseller_id' => '41', 'username' => 'resA'),
+    );
+    \WhmcsXtreamAI\PanelApi::$keyTypeValue = 'reseller';
+    $result = xtreamai_CreateAccount(baseParams(array('configoption5' => 'topup', 'configoption6' => '50')));
+    same('a reseller key cannot run a top-up', 'Credit top-ups require an admin panel key on this panel entry.', $result);
+    same('the admin key gate runs before any adjustment', 0, count(apiCalls('adjustResellerCredits')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 90, 'reseller_id' => '41', 'username' => 'resA'),
+    );
+    $result = xtreamai_CreateAccount(baseParams(array('configoption5' => 'topup', 'configoption6' => '0')));
+    same(
+        'a top-up without a credit amount is refused',
+        'No credit amount configured for this top-up product. Set Credits on the product\'s Module Settings tab or add a configurable option named credits.',
+        $result
+    );
+    same('a top-up without credits never adjusts credits', 0, count(apiCalls('adjustResellerCredits')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array(
+        135 => array(
+            'panel_id' => 1,
+            'panel_account_id' => '41',
+            'package_id' => 0,
+            'status' => 'Active',
+            'username' => 'resA',
+            'last_action' => 'Topped up +50 credits to resA (balance 150)',
+        ),
+    );
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array('configoption5' => 'topup', 'configoption6' => '50')));
+    same(
+        'provisioning an already applied top-up is refused',
+        'This top-up was already applied (Topped up +50 credits to resA (balance 150)). Use a renewal or the Sub-Resellers tab to add more credits.',
+        $result
+    );
+    same('the double application guard runs before any adjustment', 0, count(apiCalls('adjustResellerCredits')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    linkService(array('panel_account_id' => '41', 'username' => 'resA'));
+    resetApi();
+    $result = xtreamai_Renew(baseParams(array('configoption5' => 'topup', 'configoption6' => '25')));
+    same('a credit top-up renewal returns success', 'success', $result);
+    same(
+        'the renewal tops up the linked reseller account',
+        array(1, '41', 25.0, 'WHMCS top-up renewal service #135'),
+        apiCalls('adjustResellerCredits') ? apiCalls('adjustResellerCredits')[0]['args'] : null
+    );
+    same(
+        'the renewal marks the service active',
+        'Active',
+        \WhmcsXtreamAI\ServiceStore::$statuses ? \WhmcsXtreamAI\ServiceStore::$statuses[0]['status'] : null
+    );
+    same(
+        'the renewal records the credited account',
+        'Topped up +25 credits to resA (balance 150)',
+        \WhmcsXtreamAI\ServiceStore::$actions ? (string) \WhmcsXtreamAI\ServiceStore::$actions[0]['action'] : null
+    );
+
+    linkService(array('panel_account_id' => '41', 'username' => 'resA'));
+    resetApi();
+    $result = xtreamai_SuspendAccount(baseParams(array('configoption5' => 'topup')));
+    same('a top-up suspend returns success', 'success', $result);
+    same(
+        'a top-up suspend never touches the panel',
+        0,
+        count(apiCalls('setResellerStatus')) + count(apiCalls('setLineEnabled')) + count(apiCalls('deleteLine'))
+    );
+    same(
+        'a top-up suspend marks the service suspended',
+        'Suspended',
+        \WhmcsXtreamAI\ServiceStore::$statuses ? \WhmcsXtreamAI\ServiceStore::$statuses[0]['status'] : null
+    );
+
+    linkService(array('panel_account_id' => '41', 'username' => 'resA'));
+    resetApi();
+    $result = xtreamai_UnsuspendAccount(baseParams(array('configoption5' => 'topup')));
+    same('a top-up unsuspend returns success', 'success', $result);
+    same(
+        'a top-up unsuspend never touches the panel',
+        0,
+        count(apiCalls('setResellerStatus')) + count(apiCalls('setLineEnabled')) + count(apiCalls('deleteLine'))
+    );
+    same(
+        'a top-up unsuspend marks the service active',
+        'Active',
+        \WhmcsXtreamAI\ServiceStore::$statuses ? \WhmcsXtreamAI\ServiceStore::$statuses[0]['status'] : null
+    );
+
+    linkService(array('panel_account_id' => '41', 'username' => 'resA'));
+    resetApi();
+    $result = xtreamai_TerminateAccount(baseParams(array('configoption5' => 'topup')));
+    same('a top-up terminate returns success', 'success', $result);
+    same(
+        'a top-up terminate never touches the panel',
+        0,
+        count(apiCalls('setResellerStatus')) + count(apiCalls('setLineEnabled')) + count(apiCalls('deleteLine'))
+    );
+
+    linkService(array('panel_account_id' => '41', 'username' => 'resA'));
+    resetApi();
+    same(
+        'a top-up password change is refused',
+        'Password changes are not supported for Credit top-up products: the password belongs to the Sub-Reseller service.',
+        xtreamai_ChangePassword(baseParams(array('configoption5' => 'topup')))
+    );
+    same(
+        'a top-up package change is refused',
+        'Package changes are not supported for Credit top-up products.',
+        xtreamai_ChangePackage(baseParams(array('configoption5' => 'topup')))
+    );
+    same(
+        'a top-up sync is refused',
+        'Sync is not supported for Credit top-up products.',
+        xtreamai_sync(baseParams(array('configoption5' => 'topup')))
+    );
+    same(
+        'a top-up refresh is refused',
+        'Refresh from panel is not supported for Credit top-up products.',
+        xtreamai_refresh(baseParams(array('configoption5' => 'topup')))
+    );
+    same(
+        'a top-up expiry push is refused',
+        'Expiry alignment is not supported for Credit top-up products.',
+        xtreamai_push_expiry(baseParams(array('configoption5' => 'topup')))
+    );
+    same(
+        'a top-up expiry pull is refused',
+        'Expiry alignment is not supported for Credit top-up products.',
+        xtreamai_pull_expiry(baseParams(array('configoption5' => 'topup')))
+    );
+    same(
+        'a top-up product has no admin buttons',
+        array(),
+        xtreamai_AdminCustomButtonArray(baseParams(array('configoption5' => 'topup')))
+    );
+    same('the refused buttons never touch the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $fields = xtreamai_AdminServicesTabFields(baseParams(array('configoption5' => 'topup')));
+    same(
+        'a top-up without a target is explained in the tab',
+        'Not applied yet. The top-up runs when the service is created.',
+        isset($fields['Top-up target']) ? $fields['Top-up target'] : null
+    );
+
+    linkService(array('panel_account_id' => '41', 'username' => 'resA'));
+    resetApi();
+    $fields = xtreamai_AdminServicesTabFields(baseParams(array('configoption5' => 'topup', 'configoption6' => '50')));
+    same('the top-up tab names the product', 'Credit top-up', isset($fields['Product']) ? $fields['Product'] : null);
+    same(
+        'the top-up tab names the target account',
+        'resA (id 41)',
+        isset($fields['Sub-Reseller account']) ? $fields['Sub-Reseller account'] : null
+    );
+    same('the top-up tab shows the credits per order', '50', isset($fields['Credits per order']) ? $fields['Credits per order'] : null);
+    same('the top-up tab shows the live balance', '150', isset($fields['Current balance']) ? $fields['Current balance'] : null);
+    same('the top-up tab reads the balance once', 1, count(apiCalls('resellerCredits')));
+    same('the top-up tab is not read as a line', 0, count(apiCalls('getLine')));
+
+    linkService(array('panel_account_id' => '41', 'username' => 'resA'));
+    resetApi();
+    $area = xtreamai_ClientArea(baseParams(array('configoption5' => 'topup', 'configoption6' => '50')));
+    $vars = isset($area['templateVariables']) ? $area['templateVariables'] : array();
+    same('the top-up client area names the target account', 'resA', isset($vars['topup_username']) ? $vars['topup_username'] : null);
+    same('the top-up client area shows the credits per order', '50', isset($vars['topup_credits']) ? $vars['topup_credits'] : null);
+    same('the top-up client area shows the live balance', '150', isset($vars['credits']) ? $vars['credits'] : null);
+    same(
+        'the top-up client area leaves the M3U and EPG links empty',
+        array('', ''),
+        array(isset($vars['m3u_url']) ? $vars['m3u_url'] : null, isset($vars['epg_url']) ? $vars['epg_url'] : null)
+    );
+    same('the top-up client area loads no connections', array(), isset($vars['connections']) ? $vars['connections'] : null);
+    same(
+        'the top-up client area never reads a panel line',
+        0,
+        count(apiCalls('getLine')) + count(apiCalls('lineConnections'))
+    );
+
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";
     exit($GLOBALS['failed'] === 0 ? 0 : 1);
+
 }
