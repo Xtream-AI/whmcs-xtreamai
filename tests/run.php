@@ -80,6 +80,7 @@ namespace WhmcsXtreamAI {
         public static $getLineError = '';
         public static $adjustResult = '150';
         public static $findResellerResult = null;
+        public static $adminOwnerMemberIdValue = 260595;
 
         private static function record($name, array $args)
         {
@@ -166,6 +167,11 @@ namespace WhmcsXtreamAI {
             self::record('findResellerByUsername', func_get_args());
 
             return self::$findResellerResult;
+        }
+
+        public static function adminOwnerMemberId($panelId)
+        {
+            return self::$adminOwnerMemberIdValue;
         }
 
         public static function deleteLine($panelId, $lineId)
@@ -425,6 +431,7 @@ namespace {
         \WhmcsXtreamAI\PanelApi::$getLineError = '';
         \WhmcsXtreamAI\PanelApi::$adjustResult = '150';
         \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+        \WhmcsXtreamAI\PanelApi::$adminOwnerMemberIdValue = 260595;
         \WhmcsXtreamAI\ServiceStore::$statuses = array();
         \WhmcsXtreamAI\ServiceStore::$actions = array();
         \WhmcsXtreamAI\ServiceStore::$checks = array();
@@ -474,6 +481,7 @@ namespace {
             'configoption7' => '0',
             'configoption8' => '0',
             'configoption9' => 'disable',
+            'configoption10' => 'any',
         );
 
         foreach ($overrides as $key => $value) {
@@ -696,7 +704,7 @@ namespace {
 
     $options = xtreamai_ConfigOptions();
     $keys = array_values(array_keys($options));
-    same('the product has nine config options', 9, count($keys));
+    same('the product has ten config options', 10, count($keys));
     same(
         'every existing option keeps its slot',
         array(
@@ -709,6 +717,7 @@ namespace {
             'max_connections',
             'sub_reseller_member_group_id',
             'suspend_action',
+            'topup_scope',
         ),
         $keys
     );
@@ -1059,6 +1068,10 @@ namespace {
         'Credit top-up (existing Sub-Reseller)',
         $accountOptions['account_type']['Options']['topup']
     );
+    same('the top-up scope helper reads a linked scope', 'linked', xtreamai_topUpScope(array('configoption10' => 'Linked ')));
+    same('the top-up scope helper falls back to any reseller', 'any', xtreamai_topUpScope(array('configoption10' => 'x')));
+    same('the top-up scope is the tenth config option', 'topup_scope', array_keys($accountOptions)[9]);
+    same('the top-up scope defaults to any reseller', 'any', $accountOptions['topup_scope']['Default']);
 
     \WhmcsXtreamAI\ServiceStore::$rows = array();
     resetApi();
@@ -1188,7 +1201,7 @@ namespace {
 
     \WhmcsXtreamAI\ServiceStore::$rows = array();
     resetApi();
-    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '5150', 'username' => 'panelres');
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '5150', 'username' => 'panelres', 'member_group_id' => 4);
     $result = xtreamai_CreateAccount(baseParams(array(
         'configoption5' => 'topup',
         'configoption6' => '50',
@@ -1221,7 +1234,7 @@ namespace {
     \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
         array('service_id' => 90, 'reseller_id' => '41', 'username' => 'resA'),
     );
-    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '5150', 'username' => 'panelres');
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '5150', 'username' => 'panelres', 'member_group_id' => 4);
     $result = xtreamai_CreateAccount(baseParams(array(
         'configoption5' => 'topup',
         'configoption6' => '50',
@@ -1242,6 +1255,105 @@ namespace {
         'the panel account username from the lookup is recorded',
         'Topped up +50 credits to panelres (balance 150)',
         \WhmcsXtreamAI\ServiceStore::$actions ? (string) \WhmcsXtreamAI\ServiceStore::$actions[0]['action'] : null
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption5' => 'topup',
+        'configoption6' => '50',
+        'configoption10' => 'linked',
+        'customfields' => array('Reseller username' => 'ghost'),
+    )));
+    same(
+        'a linked-only top-up refuses a username that is not linked',
+        'The reseller username "ghost" does not match any of this client\'s linked Sub-Reseller accounts on this panel.',
+        $result
+    );
+    same('a linked-only refusal never adjusts credits', 0, count(apiCalls('adjustResellerCredits')));
+    same(
+        'a linked-only refusal never queries the panel by username',
+        0,
+        count(apiCalls('findResellerByUsername'))
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 90, 'reseller_id' => '41', 'username' => 'resA'),
+    );
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption5' => 'topup',
+        'configoption6' => '50',
+        'configoption10' => 'linked',
+        'customfields' => array('Reseller username' => 'resa'),
+    )));
+    same('a linked-only top-up still credits a linked account', 'success', $result);
+    same(
+        'the linked account chosen under a linked-only scope receives the credits',
+        array(1, '41', 50.0, 'WHMCS top-up service #135'),
+        apiCalls('adjustResellerCredits') ? apiCalls('adjustResellerCredits')[0]['args'] : null
+    );
+    same(
+        'a linked account under a linked-only scope never queries the panel',
+        0,
+        count(apiCalls('findResellerByUsername'))
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '5150', 'username' => 'panelres', 'member_group_id' => 4);
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption5' => 'topup',
+        'configoption6' => '50',
+        'configoption10' => null,
+        'customfields' => array('Reseller username' => 'panelres'),
+    )));
+    same('a top-up without a scope falls back to any reseller', 'success', $result);
+    same(
+        'the any reseller fallback still looks the username up on the panel',
+        array(1, 'panelres'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
+    );
+    same(
+        'the any reseller fallback credits the panel account',
+        array(1, '5150', 50.0, 'WHMCS top-up service #135'),
+        apiCalls('adjustResellerCredits') ? apiCalls('adjustResellerCredits')[0]['args'] : null
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '5150', 'username' => 'panelres', 'member_group_id' => 1);
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption5' => 'topup',
+        'configoption6' => '50',
+        'customfields' => array('Reseller username' => 'panelres'),
+    )));
+    same(
+        'a panel administrator account is refused',
+        'The reseller username "panelres" belongs to a panel administrator and cannot receive a top-up.',
+        $result
+    );
+    same('a refused administrator top-up never adjusts credits', 0, count(apiCalls('adjustResellerCredits')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '260595', 'username' => 'panelres', 'member_group_id' => 4);
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption5' => 'topup',
+        'configoption6' => '50',
+        'customfields' => array('Reseller username' => 'panelres'),
+    )));
+    same(
+        'the panel administrator owner account is refused',
+        'The reseller username "panelres" belongs to a panel administrator and cannot receive a top-up.',
+        $result
+    );
+    same('a refused administrator owner top-up never adjusts credits', 0, count(apiCalls('adjustResellerCredits')));
+    same(
+        'the administrator owner account is still looked up once',
+        1,
+        count(apiCalls('findResellerByUsername'))
     );
 
     \WhmcsXtreamAI\ServiceStore::$rows = array();

@@ -179,6 +179,13 @@ function xtreamai_ConfigOptions()
             'Default' => 'disable',
             'Description' => 'What WHMCS does on the panel when this service is suspended, for example by an unpaid invoice. Disable the line on the panel (default) turns the line off so the customer cannot watch at once, and unsuspending turns it back on. Leave the line untouched does nothing to the panel: the line keeps working until its own expiry date, and unsuspending leaves it as it is. Line products only; Sub-Reseller products are not affected by this option.',
         ],
+        'topup_scope' => [
+            'FriendlyName' => 'Top-up scope',
+            'Type' => 'dropdown',
+            'Options' => ['any' => 'Any reseller on the panel', 'linked' => 'Only this client\'s linked Sub-Reseller accounts'],
+            'Default' => 'any',
+            'Description' => 'Credit top-up products only. Any reseller on the panel (default) lets the customer type the username of any reseller account in the Reseller username custom field, whether WHMCS created it or not. Only this client\'s linked Sub-Reseller accounts restricts the top-up to Sub-Reseller services of the same WHMCS client, so a customer cannot send credits to an account that is not theirs.',
+        ],
     ];
 }
 
@@ -274,6 +281,7 @@ function xtreamai_accountTypeVisibility(): string
         var $type = $('[name="packageconfigoption[5]"]').first();
         var $credits = $('[name="packageconfigoption[6]"]').first();
         var $group = $('[name="packageconfigoption[8]"]').first();
+        var $scope = $('[name="packageconfigoption[10]"]').first();
         if (!$type.length || !$credits.length || $type.data('xtai-account-ready')) { return; }
         $type.data('xtai-account-ready', 1);
         function toggleCells($field, show) {
@@ -289,6 +297,7 @@ function xtreamai_accountTypeVisibility(): string
             var isTopUp = type === 'topup';
             toggleCells($credits, isReseller || isTopUp);
             if ($group.length) { toggleCells($group, isReseller); }
+            if ($scope.length) { toggleCells($scope, isTopUp); }
         }
         $type.on('change.xtaiAccount', apply);
         apply();
@@ -568,16 +577,26 @@ function xtreamai_topUpTarget(array $params, int $panelId): array
             }
         }
 
-        $found = \WhmcsXtreamAI\PanelApi::findResellerByUsername($panelId, $wanted);
-        if ($found !== null) {
-            return [
-                'service_id' => 0,
-                'reseller_id' => (string) $found['id'],
-                'username' => (string) $found['username'],
-            ];
+        if (xtreamai_topUpScope($params) === 'linked') {
+            throw new \RuntimeException('The reseller username "' . $wanted . '" does not match any of this client\'s linked Sub-Reseller accounts on this panel.');
         }
 
-        throw new \RuntimeException('The reseller username "' . $wanted . '" was not found on this panel.');
+        $found = \WhmcsXtreamAI\PanelApi::findResellerByUsername($panelId, $wanted);
+        if ($found === null) {
+            throw new \RuntimeException('The reseller username "' . $wanted . '" was not found on this panel.');
+        }
+
+        $adminOwnerId = \WhmcsXtreamAI\PanelApi::adminOwnerMemberId($panelId);
+        if ((int) $found['member_group_id'] === 1
+            || ($adminOwnerId !== null && (string) $found['id'] === (string) $adminOwnerId)) {
+            throw new \RuntimeException('The reseller username "' . $wanted . '" belongs to a panel administrator and cannot receive a top-up.');
+        }
+
+        return [
+            'service_id' => 0,
+            'reseller_id' => (string) $found['id'],
+            'username' => (string) $found['username'],
+        ];
     }
 
     if (count($candidates) === 1) {
@@ -749,6 +768,15 @@ function xtreamai_suspendAction(array $params): string
         $raw = reset($raw);
     }
     return strtolower(trim((string) $raw)) === 'none' ? 'none' : 'disable';
+}
+
+function xtreamai_topUpScope(array $params): string
+{
+    $raw = $params['configoption10'] ?? ($params['configoptions']['topup_scope'] ?? '');
+    if (is_array($raw)) {
+        $raw = reset($raw);
+    }
+    return strtolower(trim((string) $raw)) === 'linked' ? 'linked' : 'any';
 }
 
 function xtreamai_clamp(int $value, int $min, int $max): int

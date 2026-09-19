@@ -276,8 +276,12 @@ admin reloads the page (there is no automatic reload).
    configurable option named `credits` on the product replaces it),
    Max Connections (optional, admin key only), Sub-Reseller Member Group
    ID (required for Sub-Reseller products on Admin keys; numeric id of
-   the panel member group new Sub-Reseller accounts will belong to) and
-   Suspend action (see "Suspending without touching the panel" below).
+   the panel member group new Sub-Reseller accounts will belong to),
+   Suspend action (see "Suspending without touching the panel" below)
+   and Top-up scope (Credit top-up products only: whether the
+   `Reseller username` field accepts any reseller on the panel, the
+   default, or only usernames matching the client's linked Sub-Reseller
+   accounts on that panel).
 5. Save the product.
 
 The **Max Connections** field caps the number of concurrent connections
@@ -475,9 +479,30 @@ account an admin created by hand, which never went through WHMCS, can buy
 credits too. The top-up service stays linked to the account it credited, so
 every renewal keeps topping up that account. The custom field on every top-up
 product is the recommended setup: without it the module only gets it right when
-the client has exactly one linked Sub-Reseller service on that panel. Suspend
-and Unsuspend only change the WHMCS service state and Terminate only unlinks
-it, so the balance is never touched. Needs an admin key, like every
+the client has exactly one linked Sub-Reseller service on that panel.
+
+The **Top-up scope** option decides who that field will accept.
+`Any reseller on the panel` is the default and what a product saved before
+1.8.2 reads: the customer can send the credits to any reseller account on the
+panel, so a client can gift credits to an account that is not theirs (nobody
+can take credits away, the credits are paid for). Set it to
+`Only this client's linked Sub-Reseller accounts` when a top-up must always
+land on an account the same client owns in WHMCS: the module then accepts only
+usernames that match one of the client's Sub-Reseller services linked on that
+panel, and refuses any other username, without querying the panel, with:
+
+`The reseller username "<value>" does not match any of this client's linked Sub-Reseller accounts on this panel.`
+
+In either scope, a username that belongs to a panel administrator is refused
+with:
+
+`The reseller username "<value>" belongs to a panel administrator and cannot receive a top-up.`
+
+Administrator accounts have no reseller credit balance to top up. The option
+only appears in Module Settings when Account Type is Credit top-up.
+
+Suspend and Unsuspend only change the WHMCS service state and Terminate only
+unlinks it, so the balance is never touched. Needs an admin key, like every
 Sub-Reseller feature.
 
 ## Security notes

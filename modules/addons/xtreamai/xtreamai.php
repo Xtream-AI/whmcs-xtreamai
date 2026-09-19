@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.8.1',
+        'version'     => '1.8.2',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 

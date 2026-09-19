@@ -424,6 +424,7 @@ final class PanelApi
                 return [
                     'id' => (string) self::value($reseller, 'id', ''),
                     'username' => $found,
+                    'member_group_id' => (int) self::value($reseller, 'member_group_id', 0),
                 ];
             }
 
