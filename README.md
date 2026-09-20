@@ -387,6 +387,17 @@ too. The module validates the value on creation: 3 to 32 letters, digits,
 dashes or underscores; paste `^[A-Za-z0-9_-]{3,32}$` in the custom
 field's **Validation** box and WHMCS rejects an invalid value in the cart.
 
+From module 1.9.1 the module checks the field in the cart as well, when
+the product is added and again on the checkout page, so most mistakes are
+caught before the customer pays. Another line on the panel already using
+that username stops the order form with `The username "X" is already
+taken. Choose another one.`, and a value that does not fit the format
+stops it with `The username "X" is not valid: use 3 to 32 letters, digits,
+dashes or underscores.` when the custom field has no Validation rule of
+its own. The cart checks only when the field has a value, and when the
+panel does not answer in that moment it does not block the order: the
+username is validated again when the module creates the service.
+
 At **Create** the module reads the field, checks the username against the
 panel and, when it is free, creates the line with that username and
 generates the password from the addon's Credentials settings (the
@@ -397,8 +408,8 @@ Password Generator). Two failures are possible:
 - `The username "X" is not valid: use 3 to 32 letters, digits, dashes or
   underscores.` The value does not pass the validation.
 
-Availability is checked when WHMCS runs Create, not in the cart, so a
-username can be free at checkout and taken a minute later. When that
+Availability is checked in the cart and again when WHMCS runs Create, so
+a username can be free at checkout and taken a minute later. When that
 happens the order stays pending in WHMCS with the message above and the
 admin resolves it: change the username on the service and press Create
 again, or ask the customer for another one. The module never links an
@@ -585,6 +596,23 @@ credits too. The top-up service stays linked to the account it credited, so
 every renewal keeps topping up that account. The custom field on every top-up
 product is the recommended setup: without it the module only gets it right when
 the client has exactly one linked Sub-Reseller service on that panel.
+
+From module 1.9.1 the module also validates the `Reseller username` field
+in the cart, when the product is added and again on the checkout page.
+With **Top-up scope** at `Any reseller on the panel` a username that no
+account on the panel carries stops the order form with `The reseller
+username "X" was not found. Check the spelling and try again.`, and one
+that belongs to a panel administrator stops it with `The reseller
+username "X" cannot receive a top-up.` With **Top-up scope** at
+`Only this client's linked Sub-Reseller accounts` a signed-in client who
+types a username that matches none of their linked Sub-Reseller accounts
+sees `The reseller username "X" does not match any of your Sub-Reseller
+accounts.` A visitor who is not signed in has no linked accounts to
+compare against, so their order is not checked in the cart and is refused
+when the service is created, exactly as before. The cart checks only when
+the field has a value and needs an admin key on the panel entry; when the
+panel does not answer it does not block the order, and the destination is
+resolved again when the service is created.
 
 The **Top-up scope** option decides who that field will accept.
 `Any reseller on the panel` is the default and what a product saved before

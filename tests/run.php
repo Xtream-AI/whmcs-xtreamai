@@ -29,6 +29,18 @@ namespace WHMCS\Database {
             return null;
         }
 
+        public function get()
+        {
+            $rows = array();
+            foreach (Capsule::$rows[$this->table] as $row) {
+                if ($this->matches($row)) {
+                    $rows[] = (object) $row;
+                }
+            }
+
+            return $rows;
+        }
+
         public function update(array $values)
         {
             $count = 0;
@@ -80,8 +92,10 @@ namespace WhmcsXtreamAI {
         public static $getLineError = '';
         public static $adjustResult = '150';
         public static $findResellerResult = null;
+        public static $findResellerError = '';
         public static $adminOwnerMemberIdValue = 260595;
         public static $linesResult = array();
+        public static $linesError = '';
         public static $createLineResult = array('id' => '900001', 'username' => '', 'expires_at' => '2027-01-01 00:00:00');
 
         private static function record($name, array $args)
@@ -167,6 +181,9 @@ namespace WhmcsXtreamAI {
         public static function findResellerByUsername($panelId, $username)
         {
             self::record('findResellerByUsername', func_get_args());
+            if (self::$findResellerError !== '') {
+                throw new \RuntimeException(self::$findResellerError);
+            }
 
             return self::$findResellerResult;
         }
@@ -174,6 +191,9 @@ namespace WhmcsXtreamAI {
         public static function lines($panelId, $username = null, $enabled = null)
         {
             self::record('lines', func_get_args());
+            if (self::$linesError !== '') {
+                throw new \RuntimeException(self::$linesError);
+            }
 
             return self::$linesResult;
         }
@@ -472,8 +492,10 @@ namespace {
         \WhmcsXtreamAI\PanelApi::$getLineError = '';
         \WhmcsXtreamAI\PanelApi::$adjustResult = '150';
         \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+        \WhmcsXtreamAI\PanelApi::$findResellerError = '';
         \WhmcsXtreamAI\PanelApi::$adminOwnerMemberIdValue = 260595;
         \WhmcsXtreamAI\PanelApi::$linesResult = array();
+        \WhmcsXtreamAI\PanelApi::$linesError = '';
         \WhmcsXtreamAI\PanelApi::$createLineResult = array(
             'id' => '900001',
             'username' => '',
@@ -1985,6 +2007,418 @@ namespace {
         'Linked to existing line #43 (cliente3), expires 01/04/2027',
         \WhmcsXtreamAI\ServiceStore::$actions ? (string) \WhmcsXtreamAI\ServiceStore::$actions[0]['action'] : null
     );
+
+    section('L. Checkout validation');
+
+    \WHMCS\Database\Capsule::$rows['tblproducts'] = array(
+        array('id' => 5001, 'servertype' => 'cpanel', 'configoption1' => '1', 'configoption5' => 'line', 'configoption10' => 'any', 'configoption11' => 'on'),
+        array('id' => 5002, 'servertype' => 'xtreamai', 'configoption1' => '1', 'configoption5' => 'topup', 'configoption10' => 'any', 'configoption11' => 'off'),
+        array('id' => 5003, 'servertype' => 'xtreamai', 'configoption1' => '1', 'configoption5' => 'topup', 'configoption10' => ' Linked ', 'configoption11' => 'off'),
+        array('id' => 5004, 'servertype' => 'xtreamai', 'configoption1' => '1', 'configoption5' => 'line', 'configoption10' => 'any', 'configoption11' => 'off'),
+        array('id' => 5005, 'servertype' => 'xtreamai', 'configoption1' => '1', 'configoption5' => 'line', 'configoption10' => 'any', 'configoption11' => ' on '),
+        array('id' => 5006, 'servertype' => 'xtreamai', 'configoption1' => '0', 'configoption5' => 'line', 'configoption10' => 'any', 'configoption11' => 'on'),
+        array('id' => 5007, 'servertype' => 'xtreamai', 'configoption1' => '1', 'configoption5' => 'reseller', 'configoption10' => 'any', 'configoption11' => 'on'),
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'] = array(
+        array('id' => 9001, 'type' => 'product', 'relid' => 5002, 'fieldname' => 'Reseller username|Reseller account', 'fieldtype' => 'text'),
+        array('id' => 9002, 'type' => 'product', 'relid' => 5003, 'fieldname' => 'Reseller username', 'fieldtype' => 'text'),
+        array('id' => 9003, 'type' => 'product', 'relid' => 5004, 'fieldname' => 'Line username', 'fieldtype' => 'text'),
+        array('id' => 9004, 'type' => 'product', 'relid' => 5005, 'fieldname' => 'Line username|Username', 'fieldtype' => 'text'),
+        array('id' => 9005, 'type' => 'product', 'relid' => 5002, 'fieldname' => 'Credits', 'fieldtype' => 'text'),
+        array('id' => 9006, 'type' => 'product', 'relid' => 5001, 'fieldname' => 'Panel username', 'fieldtype' => 'text'),
+        array('id' => 9007, 'type' => 'product', 'relid' => 5006, 'fieldname' => 'Line username', 'fieldtype' => 'text'),
+        array('id' => 9008, 'type' => 'product', 'relid' => 5005, 'fieldname' => 'Panel username', 'fieldtype' => 'text'),
+    );
+
+    $checkout = 'WhmcsXtreamAI\\CheckoutValidator';
+
+    resetApi();
+    same('another server type is ignored', array(), $checkout::validateProduct(5001, array(9006 => 'mel'), 44));
+    same('an unknown product is ignored', array(), $checkout::validateProduct(5999, array(), 44));
+    same('an empty product id is ignored', array(), $checkout::validateProduct(0, array(), 44));
+    same('a sub-reseller product is ignored', array(), $checkout::validateProduct(5007, array(), 44));
+    same('a top-up without a username field is ignored', array(), $checkout::validateProduct(5002, array(), 44));
+    same('a top-up with an unrelated field is ignored', array(), $checkout::validateProduct(5002, array(9005 => 'mel'), 44));
+    same('a top-up with an empty username is ignored', array(), $checkout::validateProduct(5002, array(9001 => '   '), 44));
+    same('an ignored product never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 51, 'username' => 'no_panel_user', 'enabled' => true),
+    );
+    same('a product without a panel id is ignored', array(), $checkout::validateProduct(5006, array(9007 => 'no_panel_user'), 44));
+    same('the product without a panel id never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    same(
+        'an unknown top-up reseller is refused with the typed name',
+        array('The reseller username "ghost_reseller" was not found. Check the spelling and try again.'),
+        $checkout::validateProduct(5002, array(9001 => '  ghost_reseller  '), 44)
+    );
+    same(
+        'the unknown reseller is looked up on the panel',
+        array(1, 'ghost_reseller'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
+    );
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '555', 'username' => 'mel_any', 'member_group_id' => 2);
+    same('a top-up to an existing reseller passes', array(), $checkout::validateProduct(5002, array(9001 => 'mel_any'), 44));
+    same('the existing reseller is looked up once', 1, count(apiCalls('findResellerByUsername')));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '556', 'username' => 'admin_group', 'member_group_id' => 1);
+    same(
+        'a reseller in the administrator group is refused',
+        array('The reseller username "admin_group" cannot receive a top-up.'),
+        $checkout::validateProduct(5002, array(9001 => 'admin_group'), 44)
+    );
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '260595', 'username' => 'owner_res', 'member_group_id' => 2);
+    same(
+        'the panel owner account is refused',
+        array('The reseller username "owner_res" cannot receive a top-up.'),
+        $checkout::validateProduct(5002, array(9001 => 'owner_res'), 44)
+    );
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$keyTypeValue = 'reseller';
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    same('a top-up on a reseller key is left to provisioning', array(), $checkout::validateProduct(5002, array(9001 => 'reskey_user'), 44));
+    same('a reseller key never looks a reseller up', 0, count(apiCalls('findResellerByUsername')));
+
+    resetApi();
+    same('a linked top-up without a client session is left to provisioning', array(), $checkout::validateProduct(5003, array(9002 => 'linked_user'), 0));
+    same('no sub-reseller list is read without a client session', array(), \WhmcsXtreamAI\ServiceStore::$resellerLookups);
+
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 135, 'reseller_id' => '41', 'username' => 'Linked_User'),
+    );
+    same('a linked top-up accepts a sub-reseller of the client', array(), $checkout::validateProduct(5003, array(9002 => 'Linked_User'), 44));
+    same(
+        'the sub-reseller list is read for the session client',
+        array(array('user_id' => 44, 'panel_id' => 1)),
+        \WhmcsXtreamAI\ServiceStore::$resellerLookups
+    );
+    same('a linked top-up never looks a reseller up on the panel', 0, count(apiCalls('findResellerByUsername')));
+
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 135, 'reseller_id' => '41', 'username' => 'other_res'),
+    );
+    same(
+        'a linked top-up refuses a username that is not linked',
+        array('The reseller username "loose_user" does not match any of your Sub-Reseller accounts.'),
+        $checkout::validateProduct(5003, array(9002 => 'loose_user'), 44)
+    );
+    same('a refused linked top-up never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    same('a line without customer usernames is ignored', array(), $checkout::validateProduct(5004, array(9003 => 'Any Name!'), 44));
+    same('the line without customer usernames never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    same(
+        'a short username is refused',
+        array('The username "Ab" is not valid: use 3 to 32 letters, digits, dashes or underscores.'),
+        $checkout::validateProduct(5005, array(9004 => 'Ab'), 44)
+    );
+
+    resetApi();
+    same(
+        'an invalid username is refused with the markup stripped',
+        array('The username "scriptalert(1)/script" is not valid: use 3 to 32 letters, digits, dashes or underscores.'),
+        $checkout::validateProduct(5005, array(9004 => '<script>alert(1)</script>'), 44)
+    );
+    same('the invalid username is never looked up on the panel', 0, count(apiCalls('lines')));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 42, 'username' => 'Taken_Name', 'enabled' => true),
+    );
+    same(
+        'a taken username is refused',
+        array('The username "taken_name" is already taken. Choose another one.'),
+        $checkout::validateProduct(5005, array(9004 => 'taken_name'), 44)
+    );
+    same(
+        'the taken username is looked up on the panel with the typed value',
+        array(1, 'taken_name'),
+        apiCalls('lines') ? apiCalls('lines')[0]['args'] : null
+    );
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    same('a free username passes', array(), $checkout::validateProduct(5005, array(9004 => 'free_name'), 44));
+    same('the free username is looked up once', 1, count(apiCalls('lines')));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    same('the panel username field is accepted for a line', array(), $checkout::validateProduct(5005, array(9008 => 'panel_alias'), 44));
+    same(
+        'the panel username field is checked on the panel',
+        array(1, 'panel_alias'),
+        apiCalls('lines') ? apiCalls('lines')[0]['args'] : null
+    );
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesError = 'Panel unreachable';
+    same('a panel failure never blocks the checkout', array(), $checkout::validateProduct(5005, array(9004 => 'boom_name'), 44));
+    ok('the panel failure is written to the module log', in_array('checkout_validate:Panel unreachable', loggedActions(), true));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerError = 'Panel timeout';
+    same('a top-up panel failure never blocks the checkout', array(), $checkout::validateProduct(5002, array(9001 => 'timeout_res'), 44));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    $first = $checkout::validateProduct(5005, array(9004 => 'memo_name'), 44);
+    $callsAfterFirst = count(\WhmcsXtreamAI\PanelApi::$calls);
+    $second = $checkout::validateProduct(5005, array(9004 => 'memo_name'), 44);
+    same('the first call of a repeated username asks the panel', 1, count(apiCalls('lines')));
+    same('the first call of a repeated username returns no error', array(), $first);
+    same('the second call of a repeated username returns no error', array(), $second);
+    same('the second call of a repeated username is served from memory', $callsAfterFirst, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '557', 'username' => 'memo_res', 'member_group_id' => 2);
+    $checkout::validateProduct(5002, array(9001 => 'memo_res'), 44);
+    $callsAfterTopUp = count(\WhmcsXtreamAI\PanelApi::$calls);
+    $checkout::validateProduct(5002, array(9001 => 'memo_res'), 44);
+    same('a repeated top-up reseller is served from memory', $callsAfterTopUp, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    $productRows = \WHMCS\Database\Capsule::$rows['tblproducts'];
+    \WHMCS\Database\Capsule::$rows['tblproducts'] = (static function () {
+        throw new \RuntimeException('Products table unavailable');
+        yield;
+    })();
+    same('a database failure never blocks the checkout', array(), $checkout::validateProduct(5005, array(9004 => 'db_boom'), 44));
+    ok(
+        'the database failure is written to the module log',
+        in_array('checkout_validate:Products table unavailable', loggedActions(), true)
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'] = $productRows;
+
+    $GLOBALS['hooks'] = array();
+
+    function add_hook($name, $priority, $callable)
+    {
+        $GLOBALS['hooks'][(string) $name] = $callable;
+    }
+
+    require __DIR__ . '/../modules/addons/xtreamai/hooks.php';
+
+    ok('the cart update hook is registered', isset($GLOBALS['hooks']['ShoppingCartValidateProductUpdate']));
+    ok('the checkout hook is registered', isset($GLOBALS['hooks']['ShoppingCartValidateCheckout']));
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => array()));
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 61, 'username' => 'hook_taken', 'enabled' => true),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5005,
+        'i' => 0,
+        'customfield' => array(9004 => 'hook_taken'),
+        'billingcycle' => 'monthly',
+    ));
+    same(
+        'the cart update hook returns the validator errors',
+        array('The username "hook_taken" is already taken. Choose another one.'),
+        $errors
+    );
+
+    resetApi();
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5005,
+        'i' => 0,
+        'customfield' => array(9004 => 'free_name'),
+    ));
+    same('the cart update hook returns nothing when the validator passes', array(), $errors);
+
+    resetApi();
+    \WHMCSXtreamAI\PanelApi::$findResellerResult = array('id' => '777', 'username' => 'hook_res', 'member_group_id' => 3);
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5002,
+        'customfield' => array(9001 => 'hook_res'),
+    ));
+    same('the cart update hook accepts a valid top-up reseller', array(), $errors);
+    same(
+        'the cart update hook passes the typed reseller to the panel API',
+        array(1, 'hook_res'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
+    );
+
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 135, 'reseller_id' => '41', 'username' => 'hook_linked'),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5003,
+        'customfield' => array(9002 => 'hook_loose'),
+    ));
+    same(
+        'the cart update hook reads the client from the session',
+        array('The reseller username "hook_loose" does not match any of your Sub-Reseller accounts.'),
+        $errors
+    );
+
+    resetApi();
+    unset($_SESSION['uid']);
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5003,
+        'customfield' => array(9002 => 'hook_guest'),
+    ));
+    same('the cart update hook leaves a linked top-up alone for a guest', array(), $errors);
+
+    resetApi();
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array('pid' => 5005));
+    same('a cart update without custom fields returns nothing', array(), $errors);
+
+    resetApi();
+    $_SESSION = array(
+        'uid' => 44,
+        'cart' => array(
+            'products' => array(
+                0 => array('pid' => 5004),
+                1 => array('pid' => 5005, 'customfields' => array(9004 => 'session_index_user')),
+            ),
+        ),
+    );
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'i' => 1,
+        'customfield' => array(9004 => 'session_index_user'),
+    ));
+    same('a cart update without a pid resolves the product from the cart index', array(), $errors);
+    same(
+        'the product resolved from the cart index is checked on the panel',
+        array(1, 'session_index_user'),
+        apiCalls('lines') ? apiCalls('lines')[0]['args'] : null
+    );
+
+    resetApi();
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'customfield' => array(9004 => 'no_pid_user'),
+    ));
+    same('a cart update without a pid and without an index returns nothing', array(), $errors);
+    same('a cart update without a pid never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'i' => 9,
+        'customfield' => array(9004 => 'missing_index_user'),
+    ));
+    same('a cart update with an index outside the cart returns nothing', array(), $errors);
+    same('a cart index outside the cart never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    $_SESSION = array('cart' => array('products' => array()));
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('firstname' => 'Test'));
+    same('an empty cart returns no errors', array(), $errors);
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 62, 'username' => 'Taken_In_Cart', 'enabled' => true),
+    );
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    $_SESSION = array(
+        'uid' => 44,
+        'cart' => array(
+            'products' => array(
+                array('pid' => 5005, 'billingcycle' => 'monthly', 'customfields' => array(9004 => 'taken_in_cart')),
+                array('pid' => 5002, 'billingcycle' => 'monthly', 'customfields' => array(9001 => 'ghost_in_cart')),
+                array('pid' => 5001, 'billingcycle' => 'monthly', 'customfields' => array(9006 => 'ignored_cart_user')),
+                array('pid' => 5004, 'billingcycle' => 'monthly'),
+            ),
+        ),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('firstname' => 'Test'));
+    same(
+        'the checkout hook collects one error per cart product',
+        array(
+            'The username "taken_in_cart" is already taken. Choose another one.',
+            'The reseller username "ghost_in_cart" was not found. Check the spelling and try again.',
+        ),
+        $errors
+    );
+    same('the checkout hook looks at each cart line once', 1, count(apiCalls('lines')));
+    same('the checkout hook looks the cart reseller up once', 1, count(apiCalls('findResellerByUsername')));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    $_SESSION['cart']['products'] = array(
+        array('pid' => 5002, 'customfields' => array(9001 => 'repeat_in_cart')),
+        array('pid' => 5002, 'customfields' => array(9001 => 'repeat_in_cart')),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array());
+    same(
+        'a repeated cart error is reported once',
+        array('The reseller username "repeat_in_cart" was not found. Check the spelling and try again.'),
+        $errors
+    );
+    same('a repeated cart product is served from memory', 1, count(apiCalls('findResellerByUsername')));
+
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 135, 'reseller_id' => '41', 'username' => 'Cart_Linked_User'),
+    );
+    $_SESSION = array(
+        'cart' => array(
+            'products' => array(
+                array('pid' => 5003, 'customfields' => array(9002 => 'cart_linked_user')),
+            ),
+        ),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array(
+        'clientId' => 44,
+        'customfield' => array(9002 => 'client_field_user'),
+    ));
+    same('the checkout hook accepts a linked top-up from the client in the form', array(), $errors);
+    same(
+        'the checkout hook reads the client id from the form',
+        array(array('user_id' => 44, 'panel_id' => 1)),
+        \WhmcsXtreamAI\ServiceStore::$resellerLookups
+    );
+    same('the checkout hook ignores the client custom fields of the form', 0, count(apiCalls('findResellerByUsername')));
+
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 135, 'reseller_id' => '41', 'username' => 'other_res'),
+    );
+    $_SESSION = array(
+        'uid' => 44,
+        'cart' => array(
+            'products' => array(
+                array('pid' => 5003, 'customfields' => array(9002 => 'cart_uid_loose')),
+            ),
+        ),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 0));
+    same(
+        'the checkout hook falls back to the session client when the form sends none',
+        array('The reseller username "cart_uid_loose" does not match any of your Sub-Reseller accounts.'),
+        $errors
+    );
+    same(
+        'the checkout fallback reads the sub-reseller list for the session client',
+        array(array('user_id' => 44, 'panel_id' => 1)),
+        \WhmcsXtreamAI\ServiceStore::$resellerLookups
+    );
+
+    resetApi();
+    unset($_SESSION['uid']);
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array();
+    $_SESSION['cart']['products'] = array(
+        array('pid' => 5003, 'customfields' => array(9002 => 'cart_guest_user')),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 0));
+    same('the checkout hook leaves a linked top-up alone without a client', array(), $errors);
+    same('a checkout without a client reads no sub-reseller list', array(), \WhmcsXtreamAI\ServiceStore::$resellerLookups);
 
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";
     exit($GLOBALS['failed'] === 0 ? 0 : 1);
