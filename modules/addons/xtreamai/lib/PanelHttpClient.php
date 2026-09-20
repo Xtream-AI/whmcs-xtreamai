@@ -7,7 +7,7 @@ namespace WhmcsXtreamAI;
 final class PanelHttpClient
 {
     private const USER_AGENT = 'whmcs-xtreamai';
-    private const VERSION = '1.8.2';
+    private const VERSION = '1.9.0';
     private const QUICK_TIMEOUT = 5.0;
     private const QUICK_RETRIES = 0;
 

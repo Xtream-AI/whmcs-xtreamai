@@ -81,6 +81,8 @@ namespace WhmcsXtreamAI {
         public static $adjustResult = '150';
         public static $findResellerResult = null;
         public static $adminOwnerMemberIdValue = 260595;
+        public static $linesResult = array();
+        public static $createLineResult = array('id' => '900001', 'username' => '', 'expires_at' => '2027-01-01 00:00:00');
 
         private static function record($name, array $args)
         {
@@ -169,6 +171,28 @@ namespace WhmcsXtreamAI {
             return self::$findResellerResult;
         }
 
+        public static function lines($panelId, $username = null, $enabled = null)
+        {
+            self::record('lines', func_get_args());
+
+            return self::$linesResult;
+        }
+
+        public static function createLine(
+            $panelId,
+            $packageId,
+            $memberId,
+            $username,
+            $password,
+            $bouquets,
+            $maxConnections = null,
+            $notes = null
+        ) {
+            self::record('createLine', func_get_args());
+
+            return self::$createLineResult;
+        }
+
         public static function adminOwnerMemberId($panelId)
         {
             return self::$adminOwnerMemberIdValue;
@@ -229,6 +253,7 @@ namespace WhmcsXtreamAI {
         public static $checks = array();
         public static $clientResellers = array();
         public static $resellerLookups = array();
+        public static $links = array();
 
         public static function find($serviceId)
         {
@@ -285,6 +310,22 @@ namespace WhmcsXtreamAI {
 
         public static function link($serviceId, $panelId, $panelAccountId, $username, $packageId)
         {
+            self::$links[] = array(
+                'service_id' => $serviceId,
+                'panel_id' => $panelId,
+                'panel_account_id' => (string) $panelAccountId,
+                'username' => (string) $username,
+                'package_id' => (int) $packageId,
+            );
+            self::$rows[$serviceId] = array_merge(
+                isset(self::$rows[$serviceId]) ? self::$rows[$serviceId] : array(),
+                array(
+                    'panel_id' => $panelId,
+                    'panel_account_id' => (string) $panelAccountId,
+                    'username' => (string) $username,
+                    'package_id' => (int) $packageId,
+                )
+            );
         }
 
         public static function resellerServicesForClient($userId, $panelId)
@@ -432,11 +473,18 @@ namespace {
         \WhmcsXtreamAI\PanelApi::$adjustResult = '150';
         \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
         \WhmcsXtreamAI\PanelApi::$adminOwnerMemberIdValue = 260595;
+        \WhmcsXtreamAI\PanelApi::$linesResult = array();
+        \WhmcsXtreamAI\PanelApi::$createLineResult = array(
+            'id' => '900001',
+            'username' => '',
+            'expires_at' => '2027-01-01 00:00:00',
+        );
         \WhmcsXtreamAI\ServiceStore::$statuses = array();
         \WhmcsXtreamAI\ServiceStore::$actions = array();
         \WhmcsXtreamAI\ServiceStore::$checks = array();
         \WhmcsXtreamAI\ServiceStore::$clientResellers = array();
         \WhmcsXtreamAI\ServiceStore::$resellerLookups = array();
+        \WhmcsXtreamAI\ServiceStore::$links = array();
         \WhmcsXtreamAI\Settings::$values = array();
         $GLOBALS['moduleLog'] = array();
     }
@@ -461,6 +509,17 @@ namespace {
         }
 
         return $out;
+    }
+
+    function panelWrites()
+    {
+        return count(apiCalls('createLine'))
+            + count(apiCalls('updateLine'))
+            + count(apiCalls('renewLine'))
+            + count(apiCalls('deleteLine'))
+            + count(apiCalls('setLineEnabled'))
+            + count(apiCalls('setResellerStatus'))
+            + count(apiCalls('adjustResellerCredits'));
     }
 
     function baseParams(array $overrides = array())
@@ -704,7 +763,7 @@ namespace {
 
     $options = xtreamai_ConfigOptions();
     $keys = array_values(array_keys($options));
-    same('the product has ten config options', 10, count($keys));
+    same('the product has eleven config options', 11, count($keys));
     same(
         'every existing option keeps its slot',
         array(
@@ -718,6 +777,7 @@ namespace {
             'sub_reseller_member_group_id',
             'suspend_action',
             'topup_scope',
+            'customer_username',
         ),
         $keys
     );
@@ -727,7 +787,9 @@ namespace {
         'sub_reseller_member_group_id',
         $keys[7]
     );
-    same('the new option is configoption9', 'suspend_action', $keys[8]);
+    same('the suspend action is still configoption9', 'suspend_action', $keys[8]);
+    same('the top-up scope is still configoption10', 'topup_scope', $keys[9]);
+    same('the customer username switch is configoption11', 'customer_username', $keys[10]);
     same('the new option is a dropdown', 'dropdown', $options['suspend_action']['Type']);
     same('the new option defaults to disable', 'disable', $options['suspend_action']['Default']);
     same('the new option offers disable', 'Disable the line on the panel', $options['suspend_action']['Options']['disable']);
@@ -1538,6 +1600,390 @@ namespace {
         'the top-up client area never reads a panel line',
         0,
         count(apiCalls('getLine')) + count(apiCalls('lineConnections'))
+    );
+
+    section('J. Customer username');
+
+    $options = xtreamai_ConfigOptions();
+    same('the customer username switch is configoption11', 'customer_username', array_keys($options)[10]);
+    same('the switch is named Customer username', 'Customer username', $options['customer_username']['FriendlyName']);
+    same('the switch is a dropdown', 'dropdown', $options['customer_username']['Type']);
+    same('the switch defaults to off', 'off', $options['customer_username']['Default']);
+    same(
+        'the switch keeps the generated usernames as the default',
+        'Generated by the module (default)',
+        $options['customer_username']['Options']['off']
+    );
+    same(
+        'the switch offers the customer username',
+        'Customer types it in the "Line username" custom field',
+        $options['customer_username']['Options']['on']
+    );
+    same(
+        'the switch explains the feature',
+        'Line products only. With "Customer types it", add a custom field named "Line username" to this product (Show on Order Form, Required if you want it mandatory). The module creates the line with that username when it is free on the panel and generates the password as configured in the addon; a username that is already taken fails the provisioning with a clear message. With the field empty, or with this option off, usernames are generated as today.',
+        $options['customer_username']['Description']
+    );
+
+    same('the helper reads the product switch', true, xtreamai_customerUsernameEnabled(array('configoption11' => 'on')));
+    same('the helper is case insensitive', true, xtreamai_customerUsernameEnabled(array('configoption11' => ' ON ')));
+    same(
+        'the helper reads the config options map',
+        true,
+        xtreamai_customerUsernameEnabled(array('configoptions' => array('customer_username' => 'on')))
+    );
+    same('the helper unwraps an array value', true, xtreamai_customerUsernameEnabled(array('configoption11' => array('on'))));
+    same('the helper falls back to off', false, xtreamai_customerUsernameEnabled(array()));
+    same('the helper ignores the off value', false, xtreamai_customerUsernameEnabled(array('configoption11' => 'off')));
+    same('the helper ignores an unknown value', false, xtreamai_customerUsernameEnabled(array('configoption11' => 'maybe')));
+
+    same(
+        'the line username field reads Line username',
+        'cliente1',
+        xtreamai_lineUsernameField(array('customfields' => array('Line username' => ' cliente1 ')))
+    );
+    same(
+        'the line username field reads Username',
+        'cliente2',
+        xtreamai_lineUsernameField(array('customfields' => array('Username' => 'cliente2')))
+    );
+    same(
+        'the line username field reads Panel username',
+        'cliente3',
+        xtreamai_lineUsernameField(array('customfields' => array('Panel username' => 'cliente3')))
+    );
+    same(
+        'the line username field ignores the reseller custom field',
+        '',
+        xtreamai_lineUsernameField(array('customfields' => array('Reseller username' => 'resA')))
+    );
+    same('the line username field is empty without custom fields', '', xtreamai_lineUsernameField(array()));
+    same(
+        'the line username field is empty with a blank value',
+        '',
+        xtreamai_lineUsernameField(array('customfields' => array('Line username' => '   ')))
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption11' => 'off',
+        'customfields' => array('Line username' => 'cliente1'),
+    )));
+    same('an off switch with a custom field still provisions', 'success', $result);
+    same(
+        'an off switch generates the username',
+        xtreamai_lineUsername(baseParams()),
+        apiCalls('createLine') ? apiCalls('createLine')[0]['args'][3] : null
+    );
+    same('an off switch never searches the panel by username', 0, count(apiCalls('lines')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Line username' => '   '),
+    )));
+    same('an on switch with an empty field still provisions', 'success', $result);
+    same(
+        'an on switch with an empty field generates the username',
+        xtreamai_lineUsername(baseParams()),
+        apiCalls('createLine') ? apiCalls('createLine')[0]['args'][3] : null
+    );
+    same(
+        'the generated case keeps the configured password',
+        xtreamai_linePassword(baseParams()),
+        apiCalls('createLine') ? apiCalls('createLine')[0]['args'][4] : null
+    );
+    same('an empty field never searches the panel', 0, count(apiCalls('lines')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Line username' => 'no good!'),
+    )));
+    same(
+        'an invalid username fails with the exact message',
+        'The username "no good!" is not valid: use 3 to 32 letters, digits, dashes or underscores.',
+        $result
+    );
+    same('an invalid username never creates a line', 0, count(apiCalls('createLine')));
+    same('an invalid username is never looked up on the panel', 0, count(apiCalls('lines')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Line username' => 'ab'),
+    )));
+    same(
+        'a too short username is refused',
+        'The username "ab" is not valid: use 3 to 32 letters, digits, dashes or underscores.',
+        $result
+    );
+    same('a too short username never creates a line', 0, count(apiCalls('createLine')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 41, 'username' => 'Cliente1', 'enabled' => true, 'expires_at' => '2027-01-01'),
+    );
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Line username' => 'cliente1'),
+    )));
+    same(
+        'a taken username fails with the exact message',
+        'The username "cliente1" is already taken on this panel. Ask the customer to choose another one.',
+        $result
+    );
+    same('a taken username never creates a line', 0, count(apiCalls('createLine')));
+    same(
+        'the panel is searched with the typed username',
+        array(1, 'cliente1'),
+        apiCalls('lines') ? apiCalls('lines')[0]['args'] : null
+    );
+    same('a taken username links nothing', array(), \WhmcsXtreamAI\ServiceStore::$links);
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$createLineResult = array(
+        'id' => '900001',
+        'username' => 'cliente_1',
+        'password' => 'panelPass999',
+        'expires_at' => '2027-01-01 00:00:00',
+    );
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Line username' => 'cliente_1'),
+    )));
+    same('a free username provisions the line', 'success', $result);
+    same(
+        'the free username is sent to the panel',
+        'cliente_1',
+        apiCalls('createLine') ? apiCalls('createLine')[0]['args'][3] : null
+    );
+    same('the free username is only searched once', 1, count(apiCalls('lines')));
+    same(
+        'the created line is linked with the panel credentials',
+        array(
+            'service_id' => 135,
+            'panel_id' => 1,
+            'panel_account_id' => '900001',
+            'username' => 'cliente_1',
+            'package_id' => 76,
+        ),
+        \WhmcsXtreamAI\ServiceStore::$links ? \WhmcsXtreamAI\ServiceStore::$links[0] : null
+    );
+    same(
+        'the created line stores the panel password on the service',
+        'encrypted:panelPass999',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['password']
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 42, 'username' => 'cliente_10', 'enabled' => true, 'expires_at' => '2027-01-01'),
+    );
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Line username' => 'cliente_1'),
+    )));
+    same('a line that only matches partially does not block the username', 'success', $result);
+    same(
+        'a partial match still creates the typed username',
+        'cliente_1',
+        apiCalls('createLine') ? apiCalls('createLine')[0]['args'][3] : null
+    );
+    same(
+        'a partial match is never adopted as the service line',
+        '900001',
+        \WhmcsXtreamAI\ServiceStore::$links ? \WhmcsXtreamAI\ServiceStore::$links[0]['panel_account_id'] : null
+    );
+
+    section('K. Link existing line');
+
+    $buttons = xtreamai_AdminCustomButtonArray(baseParams());
+    same('the link button is offered first', 'Link existing line', array_keys($buttons)[0]);
+    same('the link button maps to link_existing', 'link_existing', $buttons['Link existing line']);
+    same(
+        'a sub-reseller product has no link button',
+        array(),
+        xtreamai_AdminCustomButtonArray(baseParams(array('configoption5' => 'reseller')))
+    );
+    same(
+        'a credit top-up product has no link button',
+        array(),
+        xtreamai_AdminCustomButtonArray(baseParams(array('configoption5' => 'topup')))
+    );
+
+    linkService();
+    resetApi();
+    $result = xtreamai_link_existing(baseParams(array('configoption5' => 'reseller')));
+    same(
+        'a sub-reseller service cannot link a line',
+        'Link existing line is only available for Line products.',
+        $result
+    );
+    same('the refused sub-reseller link never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $result = xtreamai_link_existing(baseParams(array('configoption5' => 'topup')));
+    same(
+        'a credit top-up service cannot link a line',
+        'Link existing line is only available for Line products.',
+        $result
+    );
+    same('the refused top-up link never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    linkService();
+    resetApi();
+    $result = xtreamai_link_existing(baseParams());
+    same('an already linked service is refused', 'This service is already linked to line #987654 (line_user).', $result);
+    same('the already linked service never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $result = xtreamai_link_existing(baseParams(array('username' => '   ')));
+    same(
+        'an empty service username is refused',
+        'Type the panel username in the Username field of this service, save, then press Link existing line.',
+        $result
+    );
+    same('the empty username never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 41, 'username' => 'otra_linea', 'enabled' => true, 'expires_at' => '2027-01-01'),
+    );
+    $result = xtreamai_link_existing(baseParams(array('username' => 'cliente1')));
+    same(
+        'a username that is not on the panel is refused',
+        'No line with username "cliente1" was found on this panel.',
+        $result
+    );
+    same(
+        'an unmatched link is searched on the panel',
+        array(1, 'cliente1'),
+        apiCalls('lines') ? apiCalls('lines')[0]['args'] : null
+    );
+    same('an unmatched link stores nothing', array(), \WhmcsXtreamAI\ServiceStore::$links);
+    same('an unmatched link records no action', array(), \WhmcsXtreamAI\ServiceStore::$actions);
+    same('an unmatched link writes nothing on the panel', 0, panelWrites());
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WHMCS\Database\Capsule::$rows['tblhosting'][0] = array(
+        'id' => 135,
+        'username' => 'cliente1',
+        'password' => 'encrypted:oldPass',
+        'nextduedate' => '2026-10-01',
+    );
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array(
+            'id' => 41,
+            'username' => 'Cliente1',
+            'enabled' => true,
+            'expires_at' => '2027-03-05',
+            'password' => 'panelPass123',
+        ),
+    );
+    $result = xtreamai_link_existing(baseParams(array('username' => 'cliente1', 'status' => 'Active')));
+    same('an existing line is linked', 'success', $result);
+    same(
+        'the link stores the line id, the username and the package',
+        array(
+            'service_id' => 135,
+            'panel_id' => 1,
+            'panel_account_id' => '41',
+            'username' => 'Cliente1',
+            'package_id' => 76,
+        ),
+        \WhmcsXtreamAI\ServiceStore::$links ? \WhmcsXtreamAI\ServiceStore::$links[0] : null
+    );
+    same(
+        'the linked row carries the panel expiry',
+        '2027-03-05',
+        isset(\WhmcsXtreamAI\ServiceStore::$rows[135]['expires_at']) ? \WhmcsXtreamAI\ServiceStore::$rows[135]['expires_at'] : null
+    );
+    same(
+        'the linked row carries the panel state',
+        'Active',
+        isset(\WhmcsXtreamAI\ServiceStore::$rows[135]['status']) ? \WhmcsXtreamAI\ServiceStore::$rows[135]['status'] : null
+    );
+    same(
+        'the service username follows the panel line',
+        'Cliente1',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['username']
+    );
+    same(
+        'the panel password is stored on the service',
+        'encrypted:panelPass123',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['password']
+    );
+    same(
+        'the WHMCS next due date is left untouched',
+        '2026-10-01',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['nextduedate']
+    );
+    same(
+        'the link is recorded in the action log',
+        'Linked to existing line #41 (Cliente1), expires 05/03/2027',
+        \WhmcsXtreamAI\ServiceStore::$actions ? (string) \WhmcsXtreamAI\ServiceStore::$actions[0]['action'] : null
+    );
+    same('the link searches the panel once', 1, count(apiCalls('lines')));
+    same('the link writes nothing on the panel', 0, panelWrites());
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = array(
+        'id' => '41',
+        'username' => 'Cliente1',
+        'enabled' => true,
+        'admin_enabled' => true,
+        'exp_date' => 1800000000,
+        'expires_at' => '2027-03-05',
+    );
+    $fields = xtreamai_AdminServicesTabFields(baseParams(array('username' => 'Cliente1')));
+    same('the tab shows the linked line id', '41', isset($fields['Panel line ID']) ? $fields['Panel line ID'] : null);
+    same('the tab shows the linked username', 'Cliente1', isset($fields['Panel username']) ? $fields['Panel username'] : null);
+    same('the tab shows the linked status', 'Active', isset($fields['Line status']) ? $fields['Line status'] : null);
+    same('the tab shows the linked panel expiry', '05/03/2027', isset($fields['Panel expiry']) ? $fields['Panel expiry'] : null);
+    same('the linked line is read from the panel once', 1, count(apiCalls('getLine')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 42, 'username' => 'cliente2', 'enabled' => true, 'expires_at' => '2027-03-05'),
+    );
+    $result = xtreamai_link_existing(baseParams(array('username' => 'cliente2', 'status' => 'Suspended')));
+    same('a suspended service is linked', 'success', $result);
+    same(
+        'a suspended service stays suspended after the link',
+        'Suspended',
+        isset(\WhmcsXtreamAI\ServiceStore::$rows[135]['status']) ? \WhmcsXtreamAI\ServiceStore::$rows[135]['status'] : null
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WHMCS\Database\Capsule::$rows['tblhosting'][0]['password'] = 'encrypted:oldPass';
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 43, 'username' => 'cliente3', 'enabled' => true, 'expires_at' => '2027-04-01'),
+    );
+    $result = xtreamai_link_existing(baseParams(array('username' => 'cliente3')));
+    same('a line without a password in the response still links', 'success', $result);
+    same(
+        'the stored password is left alone when the panel sends none',
+        'encrypted:oldPass',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['password']
+    );
+    same(
+        'the link without a password still records the expiry',
+        'Linked to existing line #43 (cliente3), expires 01/04/2027',
+        \WhmcsXtreamAI\ServiceStore::$actions ? (string) \WhmcsXtreamAI\ServiceStore::$actions[0]['action'] : null
     );
 
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";
