@@ -549,6 +549,28 @@ namespace {
         return $out;
     }
 
+    function checkoutHookLogs()
+    {
+        $out = array();
+        foreach ($GLOBALS['moduleLog'] as $entry) {
+            if ((string) $entry[1] === 'checkout_hook') {
+                $out[] = $entry;
+            }
+        }
+
+        return $out;
+    }
+
+    function logActions()
+    {
+        $out = array();
+        foreach ($GLOBALS['moduleLog'] as $entry) {
+            $out[] = (string) $entry[1];
+        }
+
+        return $out;
+    }
+
     function logRequest(array $entry)
     {
         $decoded = json_decode(isset($entry[2]) ? (string) $entry[2] : '', true);
@@ -2794,6 +2816,324 @@ namespace {
     same('the log keeps the field id list short', 20, count((array) logField('input_field_ids')));
     same('the log keeps the first field ids', array(9100, 9101), array_slice((array) logField('input_field_ids'), 0, 2));
     same('the log never writes a typed value', false, strpos((string) checkoutLogs()[0][2], 'secret_value_'));
+
+    section('N. Cart hook logging');
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => array()));
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5005,
+        'i' => 0,
+        'customfield' => array(9004 => 'hook_log_name'),
+        'billingcycle' => 'monthly',
+    ));
+    same('a cart update with a pid still returns no errors', array(), $errors);
+    same('the cart update hook line comes before the validator line', array('checkout_hook', 'checkout_validate'), logActions());
+    same('a cart update writes exactly one hook line', 1, count(checkoutHookLogs()));
+    same('a cart update writes exactly one validator line', 1, count(checkoutLogs()));
+    $request = logRequest(checkoutHookLogs()[0]);
+    same('the hook line names the cart update hook', 'product_update', (string) ($request['hook'] ?? ''));
+    same('the hook line lists the keys of the form', array('pid', 'i', 'customfield', 'billingcycle'), $request['vars_keys'] ?? null);
+    same('the hook line carries the pid of the form', 5005, (int) ($request['vars_pid'] ?? 0));
+    same('the hook line carries the cart index', '0', (string) ($request['vars_i'] ?? ''));
+    same('the hook line carries the session client', 44, (int) ($request['session_uid'] ?? 0));
+    same('the hook line carries the field ids of the form', array(9004), $request['customfield_ids_in_vars'] ?? null);
+    same('the hook line resolves the pid of the form', 5005, (int) ($request['resolved_pid'] ?? 0));
+    same('the hook line flags the validator call', true, (bool) ($request['validator_called'] ?? false));
+    same('a cart update hook line carries no form client', false, array_key_exists('vars_client_id', $request));
+    same('a cart update hook line carries no product counter', false, array_key_exists('products_validated', $request));
+    same(
+        'the hook line summarises the cart update',
+        'hook=product_update resolved_pid=5005 validator_called=1',
+        logResponse(checkoutHookLogs()[0])
+    );
+
+    resetApi();
+    $_SESSION = array(
+        'uid' => 44,
+        'cart' => array(
+            'products' => array(
+                0 => array('pid' => 5004, 'customfields' => array(9003 => 'hook_cart_first')),
+                1 => array('pid' => 5005, 'customfields' => array(9004 => 'hook_index_name')),
+            ),
+        ),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'i' => 1,
+        'customfield' => array(9004 => 'hook_index_name'),
+    ));
+    same('a cart update without a pid still resolves the cart index', array(), $errors);
+    same('a cart index update writes the hook line first', array('checkout_hook', 'checkout_validate'), logActions());
+    $request = logRequest(checkoutHookLogs()[0]);
+    same('the hook line carries no pid from the form', 0, (int) ($request['vars_pid'] ?? -1));
+    same('the hook line resolves the pid from the cart index', 5005, (int) ($request['resolved_pid'] ?? 0));
+    same('the hook line of a cart index flags the validator call', true, (bool) ($request['validator_called'] ?? false));
+    same('the hook line lists the cart products', array(
+        array('index' => 0, 'pid' => 5004, 'customfield_ids' => array(9003)),
+        array('index' => 1, 'pid' => 5005, 'customfield_ids' => array(9004)),
+    ), $request['cart_products'] ?? null);
+
+    resetApi();
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'customfield' => array(9004 => 'hook_no_pid_name'),
+    ));
+    same('a cart update without a pid and index still returns nothing', array(), $errors);
+    same('a cart update without a pid writes the hook line only', array('checkout_hook'), logActions());
+    same('a cart update without a pid writes no validator line', 0, count(checkoutLogs()));
+    same('a cart update without a pid never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+    $request = logRequest(checkoutHookLogs()[0]);
+    same('the hook line of an unresolved cart update carries no pid', 0, (int) ($request['resolved_pid'] ?? -1));
+    same('the hook line of an unresolved cart update flags no validator call', false, (bool) ($request['validator_called'] ?? true));
+    same(
+        'the hook line of an unresolved cart update summarises the skip',
+        'hook=product_update resolved_pid=0 validator_called=0',
+        logResponse(checkoutHookLogs()[0])
+    );
+
+    resetApi();
+    $_SESSION = array(
+        'uid' => 44,
+        'cart' => array(
+            'products' => array(
+                array('pid' => 5004, 'customfields' => array(9003 => 'hook_checkout_one')),
+                array('pid' => 5005, 'customfields' => array(9004 => 'hook_checkout_two')),
+            ),
+        ),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array(
+        'clientId' => 44,
+        'firstname' => 'Test',
+    ));
+    same('the checkout hook still returns no errors', array(), $errors);
+    same(
+        'the checkout hook writes the hook line before the validator lines',
+        array('checkout_hook', 'checkout_validate', 'checkout_validate'),
+        logActions()
+    );
+    $request = logRequest(checkoutHookLogs()[0]);
+    same('the hook line names the checkout hook', 'checkout', (string) ($request['hook'] ?? ''));
+    same('the checkout hook line counts the validated products', 2, (int) ($request['products_validated'] ?? -1));
+    same('the checkout hook line flags the validator calls', true, (bool) ($request['validator_called'] ?? false));
+    same('the checkout hook line carries the client of the form', 44, (int) ($request['vars_client_id'] ?? 0));
+    same('the checkout hook line carries the session client', 44, (int) ($request['session_uid'] ?? 0));
+    same('the checkout hook line carries no pid from the form', 0, (int) ($request['vars_pid'] ?? -1));
+    same('the checkout hook line lists both cart products', array(
+        array('index' => 0, 'pid' => 5004, 'customfield_ids' => array(9003)),
+        array('index' => 1, 'pid' => 5005, 'customfield_ids' => array(9004)),
+    ), $request['cart_products'] ?? null);
+    same(
+        'the checkout hook line summarises the run',
+        'hook=checkout resolved_pid=0 validator_called=1',
+        logResponse(checkoutHookLogs()[0])
+    );
+
+    resetApi();
+    $_SESSION = array('uid' => 44);
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 0));
+    same('a checkout without a cart still returns no errors', array(), $errors);
+    same('a checkout without a cart writes the hook line only', array('checkout_hook'), logActions());
+    $request = logRequest(checkoutHookLogs()[0]);
+    same('the hook line of a missing cart carries no product list', null, array_key_exists('cart_products', $request) ? $request['cart_products'] : false);
+    same('the hook line of a missing cart flags no validator call', false, (bool) ($request['validator_called'] ?? true));
+    same('the hook line of a missing cart counts no product', 0, (int) ($request['products_validated'] ?? -1));
+    same(
+        'the hook line of a missing cart summarises the skip',
+        'hook=checkout resolved_pid=0 validator_called=0',
+        logResponse(checkoutHookLogs()[0])
+    );
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => 'not-a-list'));
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 0));
+    same('a checkout with a broken cart list still returns no errors', array(), $errors);
+    same('a checkout with a broken cart list writes one hook line', 1, count(checkoutHookLogs()));
+    same('a checkout with a broken cart list writes no validator line', 0, count(checkoutLogs()));
+    $request = logRequest(checkoutHookLogs()[0]);
+    same('the hook line of a broken cart list carries no products', null, array_key_exists('cart_products', $request) ? $request['cart_products'] : false);
+    same('the hook line of a broken cart list flags no validator call', false, (bool) ($request['validator_called'] ?? true));
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => array()));
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], 'not-an-array');
+    same('a cart update with vars that are not a form still returns nothing', array(), $errors);
+    same('a cart update with vars that are not a form writes one hook line', 1, count(checkoutHookLogs()));
+    same('a cart update with vars that are not a form writes no validator line', 0, count(checkoutLogs()));
+    $request = logRequest(checkoutHookLogs()[0]);
+    same('the broken form hook line carries no vars keys', array(), $request['vars_keys'] ?? null);
+    same('the broken form hook line carries no pid', 0, (int) ($request['vars_pid'] ?? -1));
+    same('the broken form hook line flags no validator call', false, (bool) ($request['validator_called'] ?? true));
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => array()));
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], null);
+    same('a checkout with vars that are not a form still returns no errors', array(), $errors);
+    same('a checkout with vars that are not a form writes one hook line', 1, count(checkoutHookLogs()));
+    $request = logRequest(checkoutHookLogs()[0]);
+    same('the broken checkout form hook line carries no vars keys', array(), $request['vars_keys'] ?? null);
+    same('the broken checkout form hook line flags no validator call', false, (bool) ($request['validator_called'] ?? true));
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => array()));
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5005,
+        'i' => 0,
+        'customfield' => array(9004 => 'hook_secret_name'),
+    ));
+    same('the cart update with a typed value still returns no errors', array(), $errors);
+    same('the hook log never writes the typed value', false, strpos((string) checkoutHookLogs()[0][2], 'hook_secret_name'));
+    same('the hook log summary never writes the typed value', false, strpos(logResponse(checkoutHookLogs()[0]), 'hook_secret_name'));
+    same('the validator log never writes the typed value', false, strpos((string) checkoutLogs()[0][2], 'hook_secret_name'));
+
+    resetApi();
+    $_SESSION = array(
+        'uid' => 44,
+        'cart' => array(
+            'products' => array(
+                array('pid' => 5005, 'customfields' => array(9004 => 'hook_secret_cart')),
+            ),
+        ),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 44));
+    same('the checkout with a typed value still returns no errors', array(), $errors);
+    same('the checkout hook log never writes the typed value', false, strpos((string) checkoutHookLogs()[0][2], 'hook_secret_cart'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 91, 'username' => 'Hook_Log_Boom', 'enabled' => true),
+    );
+    $GLOBALS['moduleLogThrows'] = true;
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5005,
+        'customfield' => array(9004 => 'hook_log_boom'),
+    ));
+    same(
+        'a broken module log still returns the cart update errors',
+        array('The username "hook_log_boom" is already taken. Choose another one.'),
+        $errors
+    );
+    same('a broken module log writes nothing for the cart update', array(), $GLOBALS['moduleLog']);
+    unset($GLOBALS['moduleLogThrows']);
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 91, 'username' => 'Hook_Log_Boom', 'enabled' => true),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5005,
+        'customfield' => array(9004 => 'hook_log_boom'),
+    ));
+    same(
+        'the same cart update with a working module log returns the same errors',
+        array('The username "hook_log_boom" is already taken. Choose another one.'),
+        $errors
+    );
+    same('the same cart update with a working module log writes the hook line', 2, count($GLOBALS['moduleLog']));
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => array()));
+    $manyFields = array();
+    for ($index = 0; $index < 25; $index++) {
+        $manyFields[9200 + $index] = 'hook_secret_' . $index;
+    }
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5002,
+        'customfield' => $manyFields,
+    ));
+    same('the hook log keeps the field id list short', 20, count((array) (logRequest(checkoutHookLogs()[0])['customfield_ids_in_vars'] ?? array())));
+    same(
+        'the hook log keeps the first field ids',
+        array(9200, 9201),
+        array_slice((array) (logRequest(checkoutHookLogs()[0])['customfield_ids_in_vars'] ?? array()), 0, 2)
+    );
+    same('the hook log never writes a typed value', false, strpos((string) checkoutHookLogs()[0][2], 'hook_secret_'));
+
+    resetApi();
+    $manyVars = array('pid' => 5005, 'customfield' => array(9004 => 'hook_many_keys_name'));
+    for ($index = 0; $index < 45; $index++) {
+        $manyVars['extra_' . $index] = 'value_' . $index;
+    }
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], $manyVars);
+    same('the hook log keeps the vars key list short', 40, count((array) (logRequest(checkoutHookLogs()[0])['vars_keys'] ?? array())));
+    same(
+        'the hook log keeps the first vars keys',
+        array('pid', 'customfield'),
+        array_slice((array) (logRequest(checkoutHookLogs()[0])['vars_keys'] ?? array()), 0, 2)
+    );
+    same('the hook log never writes a var value', false, strpos((string) checkoutHookLogs()[0][2], 'value_7'));
+
+    resetApi();
+    $manyProducts = array();
+    for ($index = 0; $index < 25; $index++) {
+        $manyProducts[] = array('pid' => 5004, 'customfields' => array(9003 => 'hook_many_cart_' . $index));
+    }
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => $manyProducts));
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 44));
+    same('a long cart still returns no errors', array(), $errors);
+    same('the hook log keeps the cart list short', 20, count((array) (logRequest(checkoutHookLogs()[0])['cart_products'] ?? array())));
+    same('the hook log counts every validated cart product', 25, (int) (logRequest(checkoutHookLogs()[0])['products_validated'] ?? -1));
+
+    resetApi();
+    $_SESSION = array(
+        'uid' => 44,
+        'cart' => array(
+            'products' => new class implements ArrayAccess {
+                public function offsetExists($offset)
+                {
+                    return true;
+                }
+
+                public function offsetGet($offset)
+                {
+                    throw new \RuntimeException('cart index exploded');
+                }
+
+                public function offsetSet($offset, $value)
+                {
+                }
+
+                public function offsetUnset($offset)
+                {
+                }
+            },
+        ),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'i' => 0,
+        'customfield' => array(9004 => 'hook_exception_name'),
+    ));
+    same('a cart update with a throwing cart still returns nothing', array(), $errors);
+    same('a cart update with a throwing cart writes one hook line', 1, count(checkoutHookLogs()));
+    same('a cart update with a throwing cart writes no validator line', 0, count(checkoutLogs()));
+    $request = logRequest(checkoutHookLogs()[0]);
+    same('the exception hook line carries no cart list', null, array_key_exists('cart_products', $request) ? $request['cart_products'] : false);
+    same('the exception hook line flags no validator call', false, (bool) ($request['validator_called'] ?? true));
+    same('the exception hook line names the exception', 'RuntimeException: cart index exploded', (string) ($request['exception'] ?? ''));
+    same(
+        'the exception hook line summarises the failure',
+        'hook=product_update resolved_pid=0 validator_called=0 exception=RuntimeException: cart index exploded',
+        logResponse(checkoutHookLogs()[0])
+    );
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => new \stdClass());
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 44));
+    same('a checkout with a throwing session cart still returns no errors', array(), $errors);
+    same('a checkout with a throwing session cart writes one hook line', 1, count(checkoutHookLogs()));
+    same('a checkout with a throwing session cart writes no validator line', 0, count(checkoutLogs()));
+    $request = logRequest(checkoutHookLogs()[0]);
+    same('the checkout exception line names the hook', 'checkout', (string) ($request['hook'] ?? ''));
+    same('the checkout exception line carries no cart products', false, array_key_exists('cart_products', $request));
+    same('the checkout exception line flags no validator call', false, (bool) ($request['validator_called'] ?? true));
+    same(
+        'the checkout exception line names the exception',
+        'Error: Cannot use object of type stdClass as array',
+        (string) ($request['exception'] ?? '')
+    );
+    same(
+        'the checkout exception line summarises the failure',
+        'hook=checkout resolved_pid=0 validator_called=0 exception=Error: Cannot use object of type stdClass as array',
+        logResponse(checkoutHookLogs()[0])
+    );
 
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";
     exit($GLOBALS['failed'] === 0 ? 0 : 1);
