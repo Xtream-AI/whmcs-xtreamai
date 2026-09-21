@@ -4483,6 +4483,172 @@ namespace {
         apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][1] : null
     );
 
+    section('S. Write notes switch');
+
+    same('the notes switch is on when the setting is absent', true, xtreamai_notesEnabled());
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '1';
+    same('the notes switch is on when the setting is 1', true, xtreamai_notesEnabled());
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '0';
+    same('the notes switch is off when the setting is 0', false, xtreamai_notesEnabled());
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '';
+    same('an empty notes switch value stays on', true, xtreamai_notesEnabled());
+    unset(\WhmcsXtreamAI\Settings::$values['notes_enabled']);
+
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '0';
+    same('the notes renderer returns null with the switch off', null, xtreamai_renderNotes(baseParams()));
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '1';
+    same(
+        'the notes renderer keeps the template with the switch on',
+        'WHMCS:135',
+        xtreamai_renderNotes(baseParams())
+    );
+    unset(\WhmcsXtreamAI\Settings::$values['notes_enabled']);
+    same(
+        'the notes renderer keeps the template when the setting is absent',
+        'WHMCS:135',
+        xtreamai_renderNotes(baseParams())
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '0';
+    $result = xtreamai_CreateAccount(baseParams());
+    same('a line with the switch off provisions', 'success', $result);
+    same('a line with the switch off is created once', 1, count(apiCalls('createLine')));
+    same(
+        'a line with the switch off sends no notes to the panel',
+        null,
+        apiCalls('createLine') ? apiCalls('createLine')[0]['args'][7] : 'no createLine call'
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '1';
+    $result = xtreamai_CreateAccount(baseParams());
+    same('a line with the switch on provisions', 'success', $result);
+    same(
+        'a line with the switch on sends the notes template',
+        'WHMCS:135',
+        apiCalls('createLine') ? apiCalls('createLine')[0]['args'][7] : null
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '0';
+    $result = xtreamai_CreateAccount(resellerParams(array('configoption8' => '20')));
+    same('a Sub-Reseller with the switch off provisions', 'success', $result);
+    same('a Sub-Reseller with the switch off is created once', 1, count(apiCalls('createReseller')));
+    same(
+        'a Sub-Reseller with the switch off sends no notes to the panel',
+        null,
+        apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][5] : 'no createReseller call'
+    );
+    unset(\WhmcsXtreamAI\Settings::$values['notes_enabled']);
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '0';
+    \WhmcsXtreamAI\PanelApi::$updateLineResult = array(
+        'id' => '987654',
+        'username' => 'line_user',
+        'enabled' => true,
+        'admin_enabled' => true,
+        'exp_date' => 1804288400,
+        'expires_at' => '2027-03-05',
+    );
+    $result = xtreamai_sync(baseParams());
+    same('sync with the switch off returns success', 'success', $result);
+    same(
+        'sync with the switch off pushes only the bouquets',
+        array('bouquets' => array(14)),
+        apiCalls('updateLine') ? apiCalls('updateLine')[0]['args'][2] : null
+    );
+    same('sync with the switch off never reads the line', 0, count(apiCalls('getLine')));
+    same(
+        'sync with the switch off stores the panel expiry',
+        '2027-03-05',
+        \WhmcsXtreamAI\ServiceStore::$rows[135]['expires_at']
+    );
+    same('sync with the switch off stores the panel status', 'Active', \WhmcsXtreamAI\ServiceStore::$rows[135]['status']);
+    same(
+        'sync with the switch off leaves the bouquets summary',
+        'Synced bouquets (1) · panel: Active, expires 05/03/2027',
+        (string) \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action']
+    );
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '0';
+    \WhmcsXtreamAI\PanelApi::$getLineResult = array(
+        'id' => '987654',
+        'username' => 'line_user',
+        'enabled' => true,
+        'admin_enabled' => true,
+        'exp_date' => 1804288400,
+        'expires_at' => '2027-03-05',
+    );
+    $result = xtreamai_sync(baseParams(array('configoption4' => '')));
+    same('sync with nothing to push returns success', 'success', $result);
+    same('sync with nothing to push never writes to the panel', 0, count(apiCalls('updateLine')));
+    same('sync with nothing to push reads the line once', 1, count(apiCalls('getLine')));
+    same(
+        'sync with nothing to push stores the read expiry',
+        '2027-03-05',
+        \WhmcsXtreamAI\ServiceStore::$rows[135]['expires_at']
+    );
+    same(
+        'sync with nothing to push stores the read status',
+        'Active',
+        \WhmcsXtreamAI\ServiceStore::$rows[135]['status']
+    );
+    same(
+        'sync with nothing to push leaves the nothing-to-push summary',
+        'Nothing to push · panel: Active, expires 05/03/2027',
+        (string) \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action']
+    );
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '0';
+    $result = xtreamai_ChangePackage(baseParams());
+    same('a package change with the switch off returns success', 'success', $result);
+    same(
+        'a package change with the switch off sends no notes',
+        array('bouquets' => array(14)),
+        apiCalls('updateLine') ? apiCalls('updateLine')[0]['args'][2] : null
+    );
+
+    linkService(array('package_id' => 91));
+    resetApi();
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '0';
+    $result = xtreamai_ChangePackage(baseParams(array('configoption7' => '5')));
+    same('a package change with the switch off and a new package returns success', 'success', $result);
+    same(
+        'a package change with the switch off keeps the other fields',
+        array('bouquets' => array(14), 'package_id' => 76, 'max_connections' => 5),
+        apiCalls('updateLine') ? apiCalls('updateLine')[0]['args'][2] : null
+    );
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\Settings::$values['notes_enabled'] = '0';
+    $result = xtreamai_ChangePackage(baseParams(array('configoption4' => '')));
+    same('a package change with nothing to send returns success', 'success', $result);
+    same('a package change with nothing to send never writes to the panel', 0, count(apiCalls('updateLine')));
+
+    linkService();
+    resetApi();
+    $result = xtreamai_ChangePackage(baseParams());
+    same('a package change with the setting absent returns success', 'success', $result);
+    same(
+        'a package change with the setting absent still sends the notes',
+        array('notes' => 'WHMCS:135', 'bouquets' => array(14)),
+        apiCalls('updateLine') ? apiCalls('updateLine')[0]['args'][2] : null
+    );
+
+    unset(\WhmcsXtreamAI\Settings::$values['notes_enabled']);
+
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";
     exit($GLOBALS['failed'] === 0 ? 0 : 1);
 

@@ -107,7 +107,13 @@ account on the panel:
   typed, only its length.
 - Credential generators: username and password generators (auto-generate
   toggle, prefix, length, character type, live preview) and the line
-  notes template with documented tags and a live example.
+  notes template with documented tags and a live example. The same card
+  carries a **Write notes** switch, on by default and per WHMCS
+  installation; its help text reads "When No, the module never writes to
+  the notes of a line or a Sub-Reseller account: nothing is written when
+  the account is created, synced or moved to another package, and
+  existing notes are left as they are. Bulk tools then link services by
+  username only."
 
 ### Bulk tools
 
@@ -123,8 +129,9 @@ link that already exists.
    stores it locally in `mod_xtreamai_line_index` (line id, username,
    expiry, status and the WHMCS service id parsed from the line notes
    with the **Line Notes Template**, `WHMCS:{service_id}` by default).
-   Read-only on the panel. The first batch of a run replaces the
-   previous index of that panel.
+   With **Write notes** off the new lines carry no tag, so they can only
+   be linked by username. Read-only on the panel. The first batch of a
+   run replaces the previous index of that panel.
 2. **Link existing services.** Matches WHMCS services that have no panel
    line recorded yet against that index: first by the notes tag
    (`service_tag = tblhosting.id`), then by the panel username. On a

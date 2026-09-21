@@ -164,6 +164,7 @@ final class Settings
             'password_length' => '10',
             'password_type'   => 'numeric',
             'reseller_notes'  => 'WHMCS:{service_id}',
+            'notes_enabled'   => '1',
         ];
     }
 
@@ -180,6 +181,7 @@ final class Settings
 
             case 'username_auto':
             case 'password_auto':
+            case 'notes_enabled':
                 return $value === '1' ? '1' : '0';
 
             case 'username_type':

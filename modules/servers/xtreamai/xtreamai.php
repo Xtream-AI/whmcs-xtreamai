@@ -953,8 +953,17 @@ function xtreamai_lineUsername(array $params): string
     return substr($prefix . xtreamai_randomString($randomLength, $settings['username_type']), 0, $length);
 }
 
-function xtreamai_renderNotes(array $params): string
+function xtreamai_notesEnabled(): bool
 {
+    return \WhmcsXtreamAI\Settings::get('notes_enabled', '1') !== '0';
+}
+
+function xtreamai_renderNotes(array $params): ?string
+{
+    if (!xtreamai_notesEnabled()) {
+        return null;
+    }
+
     $template = (string) \WhmcsXtreamAI\Settings::get('reseller_notes', '');
     if ($template === '') {
         $template = 'WHMCS:{service_id}';
@@ -1888,8 +1897,12 @@ function xtreamai_sync(array $params)
         $notes = xtreamai_renderNotes($params);
         $maxConn = xtreamai_maxConnectionsForService($params, $panelId, xtreamai_currentPackageIdForService($params));
 
-        $fields = ['notes' => $notes];
-        $parts = ['notes'];
+        $fields = [];
+        $parts = [];
+        if ($notes !== null) {
+            $fields['notes'] = $notes;
+            $parts[] = 'notes';
+        }
         if ($bouquets !== []) {
             $fields['bouquets'] = $bouquets;
             $parts[] = 'bouquets (' . count($bouquets) . ')';
@@ -1899,8 +1912,13 @@ function xtreamai_sync(array $params)
             $parts[] = 'connections=' . $maxConn;
         }
 
-        $line = \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
-        $summary = 'Synced ' . implode(', ', $parts);
+        if ($fields === []) {
+            $line = \WhmcsXtreamAI\PanelApi::getLine($panelId, $lineId);
+            $summary = 'Nothing to push';
+        } else {
+            $line = \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
+            $summary = 'Synced ' . implode(', ', $parts);
+        }
 
         if (is_array($line) && !empty($line['id'])) {
             \WhmcsXtreamAI\ServiceStore::updateFromLine($serviceId, $line);
@@ -2060,7 +2078,10 @@ function xtreamai_ChangePackage(array $params)
         $notes = xtreamai_renderNotes($params);
         $maxConn = xtreamai_maxConnectionsForService($params, $panelId, $newPackageId);
 
-        $fields = ['notes' => $notes];
+        $fields = [];
+        if ($notes !== null) {
+            $fields['notes'] = $notes;
+        }
         if ($bouquets !== []) {
             $fields['bouquets'] = $bouquets;
         }
@@ -2071,7 +2092,9 @@ function xtreamai_ChangePackage(array $params)
             $fields['max_connections'] = $maxConn;
         }
 
-        \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
+        if ($fields !== []) {
+            \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
+        }
 
         if ($packageChanged) {
             \WhmcsXtreamAI\ServiceStore::setPackageId((int) ($params['serviceid'] ?? 0), $newPackageId);

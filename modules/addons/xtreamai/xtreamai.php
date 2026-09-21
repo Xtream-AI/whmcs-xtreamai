@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.10.1',
+        'version'     => '1.11.0',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -1631,6 +1631,7 @@ font-family:var(--xtai-font);font-size:14px;line-height:1.55;color:var(--xtai-te
             'password_length' => '10',
             'password_type'   => 'numeric',
             'reseller_notes'  => 'WHMCS:{service_id}',
+            'notes_enabled'   => '1',
         ];
         if (class_exists('WhmcsXtreamAI\\Settings')) {
             try {
@@ -1642,6 +1643,7 @@ font-family:var(--xtai-font);font-size:14px;line-height:1.55;color:var(--xtai-te
 
         $usernameAutoChecked = $cred['username_auto'] === '1' ? ' checked' : '';
         $passwordAutoChecked = $cred['password_auto'] === '1' ? ' checked' : '';
+        $notesEnabledChecked = $cred['notes_enabled'] === '1' ? ' checked' : '';
         $usernameLengthE = $h($cred['username_length']);
         $passwordLengthE = $h($cred['password_length']);
         $usernamePrefixE = $h($cred['username_prefix']);
@@ -1716,7 +1718,11 @@ font-family:var(--xtai-font);font-size:14px;line-height:1.55;color:var(--xtai-te
             . '</section>'
             . '<section class="xtai-card xtai-card--full">'
             . '<h2>Line Notes Template</h2>'
-            . '<p class="xtai-sub">Template used for the notes attached to each new line.</p>'
+            . '<p class="xtai-sub">Template used for the notes attached to each new line. Turn Write notes off to keep the panel notes untouched.</p>'
+            . '<div class="xtai-field"><label>Write notes</label>'
+            . '<input type="hidden" name="notes_enabled" value="0">'
+            . '<label class="xtai-switch"><input type="checkbox" name="notes_enabled" value="1"' . $notesEnabledChecked . '><span class="xtai-switch__track"></span><span class="xtai-switch__label">Yes</span></label>'
+            . '<span class="xtai-help">When No, the module never writes to the notes of a line or a Sub-Reseller account: nothing is written when the account is created, synced or moved to another package, and existing notes are left as they are. Bulk tools then link services by username only.</span></div>'
             . '<div class="xtai-field xtai-field--full"><label for="xtai-reseller-notes">Reseller notes</label>'
             . '<textarea id="xtai-reseller-notes" name="reseller_notes" maxlength="2000">' . $notesE . '</textarea></div>'
             . '<div class="xtai-tags">'

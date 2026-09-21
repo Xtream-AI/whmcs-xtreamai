@@ -341,7 +341,7 @@ Run this before the other tools. It only reads from the panel, so it changes not
 
 ### 9.2 Link existing services
 
-This connects WHMCS services that have no panel line recorded yet to the lines that already exist. It looks for the **service number in the line notes** first (the **Line Notes Template** of General Settings, `WHMCS:{service_id}` by default) and falls back to the **username**.
+This connects WHMCS services that have no panel line recorded yet to the lines that already exist. It looks for the **service number in the line notes** first (the **Line Notes Template** of General Settings, `WHMCS:{service_id}` by default) and falls back to the **username**. If you set the **Write notes** switch of General Settings to No, the module stops writing that label on new lines, so those lines can only be matched by username.
 
 1. Choose the panel and run **Index panel lines** first.
 2. Tick **Include Pending, Terminated and Cancelled services** only if you want those services linked too. Normally they are left out.
@@ -470,6 +470,13 @@ Inside **Addons → Xtream AI Panel** you have these tabs:
 | `{product_name}` | The product name. |
 
 **Example:** if the template is `WHMCS:{service_id}` and the service is number 135, the note will become `WHMCS:135`.
+
+**Write notes** — the switch that decides whether the module writes in the notes of the panel at all. It sits inside the **Line Notes Template** card and it is on **Yes** by default; it applies to your whole WHMCS installation, not to one product at a time:
+
+- **Yes:** everything works as explained above. The note is written on every new line and every new Sub-Reseller account, and the module writes it again when you press **Sync bouquets, notes & connections**, when you run **Sync services** in Bulk tools (section 9) and when a service changes to another product.
+- **No:** the module never writes in the notes of the panel. Nothing is written when the account is created, when you sync it or when it moves to another package, and the notes that are already there stay exactly as they are: switching the option does not delete or change them, in the panel or in WHMCS.
+
+With **No** two things change in your day to day. In **Bulk tools**, the **Link existing services** card can only match services by username, because the lines created from then on carry no `WHMCS:{service_id}` note to read. And when you press **Sync bouquets, notes & connections** on a service whose product has no bouquets and no connections to send, **Last module action** shows `Nothing to push` instead of `Synced notes`: there is nothing to write, so the module does not call the panel.
 
 When you're done, click **Save Settings**.
 

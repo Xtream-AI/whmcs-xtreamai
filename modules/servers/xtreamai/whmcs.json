@@ -2,7 +2,7 @@
     "schema": "1.0",
     "type": "whmcs-servers",
     "name": "xtreamai",
-    "version": "1.10.1",
+    "version": "1.11.0",
     "license": "MIT",
     "category": "servers",
     "description": {

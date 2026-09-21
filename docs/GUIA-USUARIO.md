@@ -343,7 +343,7 @@ Ejecuta esto antes que las otras herramientas. Solo lee del panel, así que no c
 
 ### 9.2 Link existing services (vincular servicios existentes)
 
-Conecta los servicios de WHMCS que todavía no tienen una línea del panel registrada con las líneas que ya existen. Busca primero el **número de servicio en las notas de la línea** (la plantilla **Line Notes Template** de General Settings, `WHMCS:{service_id}` por defecto) y, si no lo encuentra, por el **usuario**.
+Conecta los servicios de WHMCS que todavía no tienen una línea del panel registrada con las líneas que ya existen. Busca primero el **número de servicio en las notas de la línea** (la plantilla **Line Notes Template** de General Settings, `WHMCS:{service_id}` por defecto) y, si no lo encuentra, por el **usuario**. Si pones el interruptor **Write notes** de General Settings en **No**, el módulo deja de escribir esa etiqueta en las líneas nuevas, así que esas líneas solo se pueden emparejar por usuario.
 
 1. Elige el panel y ejecuta antes **Index panel lines**.
 2. Marca **Include Pending, Terminated and Cancelled services** solo si quieres vincular también esos servicios. Lo normal es dejarlos fuera.
@@ -472,6 +472,13 @@ Dentro de **Addons → Xtream AI Panel** tienes estas pestañas:
 | `{product_name}` | El nombre del producto. |
 
 **Ejemplo:** si la plantilla es `WHMCS:{service_id}` y el servicio es el número 135, la nota quedará como `WHMCS:135`.
+
+**Write notes** — el interruptor que decide si el módulo escribe algo en las notas del panel. Está dentro de la tarjeta **Line Notes Template** y viene en **Yes** por defecto; se aplica a toda tu instalación de WHMCS, no a un producto en concreto:
+
+- **Yes:** todo funciona como se explica arriba. La nota se escribe en cada línea nueva y en cada cuenta Sub-Reseller nueva, y el módulo la vuelve a escribir cuando pulsas **Sync bouquets, notes & connections**, cuando ejecutas **Sync services** en Bulk tools (sección 9) y cuando un servicio cambia a otro producto.
+- **No:** el módulo no escribe nunca en las notas del panel. No escribe nada al crear la cuenta, ni al sincronizarla, ni al cambiarla de paquete, y las notas que ya existen quedan tal como están: cambiar la opción no las borra ni las modifica, ni en el panel ni en WHMCS.
+
+Con **No** cambian dos cosas en tu día a día. En **Bulk tools**, la tarjeta **Link existing services** solo puede emparejar los servicios por usuario, porque las líneas creadas a partir de ese momento no llevan la etiqueta `WHMCS:{service_id}` que leer. Y si pulsas **Sync bouquets, notes & connections** en un servicio cuyo producto no tiene bouquets ni conexiones que enviar, **Last module action** muestra `Nothing to push` en lugar de `Synced notes`: no hay nada que escribir, así que el módulo no llama al panel.
 
 Cuando termines, pulsa **Save Settings** (Guardar ajustes).
 
