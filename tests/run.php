@@ -97,6 +97,7 @@ namespace WhmcsXtreamAI {
         public static $linesResult = array();
         public static $linesError = '';
         public static $createLineResult = array('id' => '900001', 'username' => '', 'expires_at' => '2027-01-01 00:00:00');
+        public static $createResellerResult = array('id' => '770001', 'username' => '');
 
         private static function record($name, array $args)
         {
@@ -211,6 +212,20 @@ namespace WhmcsXtreamAI {
             self::record('createLine', func_get_args());
 
             return self::$createLineResult;
+        }
+
+        public static function createReseller(
+            $panelId,
+            $username,
+            $password,
+            $email,
+            $credits = null,
+            $notes = null,
+            $memberGroupId = null
+        ) {
+            self::record('createReseller', func_get_args());
+
+            return self::$createResellerResult;
         }
 
         public static function adminOwnerMemberId($panelId)
@@ -505,6 +520,7 @@ namespace {
             'username' => '',
             'expires_at' => '2027-01-01 00:00:00',
         );
+        \WhmcsXtreamAI\PanelApi::$createResellerResult = array('id' => '770001', 'username' => '');
         \WhmcsXtreamAI\ServiceStore::$statuses = array();
         \WhmcsXtreamAI\ServiceStore::$actions = array();
         \WhmcsXtreamAI\ServiceStore::$checks = array();
@@ -671,6 +687,49 @@ namespace {
             'username' => 'line_user',
             'expires_at' => '2026-10-01 00:00:00',
         ), $overrides);
+    }
+
+    function resellerParams(array $overrides = array())
+    {
+        return baseParams(array_merge(array(
+            'configoption5' => 'reseller',
+            'clientsdetails' => array('email' => 'cliente@example.com'),
+        ), $overrides));
+    }
+
+    function hostingRow()
+    {
+        return array(
+            array('id' => 135, 'username' => 'line_user', 'password' => '', 'nextduedate' => '2026-10-01'),
+        );
+    }
+
+    function customFieldValueRow($id)
+    {
+        $rows = isset(\WHMCS\Database\Capsule::$rows['tblcustomfieldsvalues'])
+            ? \WHMCS\Database\Capsule::$rows['tblcustomfieldsvalues']
+            : array();
+
+        foreach ($rows as $row) {
+            if ((int) $row['id'] === (int) $id) {
+                return $row['value'];
+            }
+        }
+
+        return null;
+    }
+
+    function setCustomFieldValueRow($id, $value)
+    {
+        $rows = isset(\WHMCS\Database\Capsule::$rows['tblcustomfieldsvalues'])
+            ? \WHMCS\Database\Capsule::$rows['tblcustomfieldsvalues']
+            : array();
+
+        foreach ($rows as $index => $row) {
+            if ((int) $row['id'] === (int) $id) {
+                \WHMCS\Database\Capsule::$rows['tblcustomfieldsvalues'][$index]['value'] = $value;
+            }
+        }
     }
 
     require __DIR__ . '/../modules/servers/xtreamai/xtreamai.php';
@@ -870,7 +929,7 @@ namespace {
 
     $options = xtreamai_ConfigOptions();
     $keys = array_values(array_keys($options));
-    same('the product has eleven config options', 11, count($keys));
+    same('the product has twelve config options', 12, count($keys));
     same(
         'every existing option keeps its slot',
         array(
@@ -885,6 +944,7 @@ namespace {
             'suspend_action',
             'topup_scope',
             'customer_username',
+            'customer_password',
         ),
         $keys
     );
@@ -897,6 +957,7 @@ namespace {
     same('the suspend action is still configoption9', 'suspend_action', $keys[8]);
     same('the top-up scope is still configoption10', 'topup_scope', $keys[9]);
     same('the customer username switch is configoption11', 'customer_username', $keys[10]);
+    same('the customer password switch is configoption12', 'customer_password', $keys[11]);
     same('the new option is a dropdown', 'dropdown', $options['suspend_action']['Type']);
     same('the new option defaults to disable', 'disable', $options['suspend_action']['Default']);
     same('the new option offers disable', 'Disable the line on the panel', $options['suspend_action']['Options']['disable']);
@@ -1723,12 +1784,12 @@ namespace {
     );
     same(
         'the switch offers the customer username',
-        'Customer types it in the "Line username" custom field',
+        'Customer types it in the "Line username" or "Reseller username" custom field',
         $options['customer_username']['Options']['on']
     );
     same(
         'the switch explains the feature',
-        'Line products only. With "Customer types it", add a custom field named "Line username" to this product (Show on Order Form, Required if you want it mandatory). The module creates the line with that username when it is free on the panel and generates the password as configured in the addon; a username that is already taken fails the provisioning with a clear message. With the field empty, or with this option off, usernames are generated as today.',
+        'Line and Sub-Reseller products. With "Customer types it", add a custom field to this product named "Line username" (Line) or "Reseller username" (Sub-Reseller), Show on Order Form, Required if you want it mandatory. The module creates the account with that username when it is free on the panel; a username that is already taken fails the provisioning with a clear message. With the field empty, or with this option off, usernames are generated as today. Credit top-up products do not use this option.',
         $options['customer_username']['Description']
     );
 
@@ -2121,7 +2182,7 @@ namespace {
     same('another server type is ignored', array(), $checkout::validateProduct(5001, array(9006 => 'mel'), 44));
     same('an unknown product is ignored', array(), $checkout::validateProduct(5999, array(), 44));
     same('an empty product id is ignored', array(), $checkout::validateProduct(0, array(), 44));
-    same('a sub-reseller product is ignored', array(), $checkout::validateProduct(5007, array(), 44));
+    same('a sub-reseller product without a username field is ignored', array(), $checkout::validateProduct(5007, array(), 44));
     same('a top-up without a username field is ignored', array(), $checkout::validateProduct(5002, array(), 44));
     same('a top-up with an unrelated field is ignored', array(), $checkout::validateProduct(5002, array(9005 => 'mel'), 44));
     same('a top-up with an empty username is ignored', array(), $checkout::validateProduct(5002, array(9001 => '   '), 44));
@@ -2578,8 +2639,9 @@ namespace {
     same('the log of an ignored server type carries the server type', 'cpanel', (string) logField('servertype'));
 
     resetApi();
-    same('a sub-reseller product is still ignored', array(), $checkout::validateProduct(5007, array(), 44));
-    same('a sub-reseller product logs one entry', array('reseller_type'), logDecisions());
+    same('a sub-reseller product is still ignored without a field', array(), $checkout::validateProduct(5007, array(), 44));
+    same('a sub-reseller product logs one entry', array('reseller_no_field'), logDecisions());
+    same('the sub-reseller log flags customer usernames', 'on', (string) logField('customer_username_enabled'));
 
     resetApi();
     same(
@@ -3331,6 +3393,983 @@ namespace {
     );
     same('a disabled line with a single field logs the disabled decision', array('line_disabled'), logDecisions());
     same('a disabled line with a single field never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    section('P. Sub-Reseller customer username');
+
+    $options = xtreamai_ConfigOptions();
+    same('the customer password switch is configoption12', 'customer_password', array_keys($options)[11]);
+    same('the switch is named Customer password', 'Customer password', $options['customer_password']['FriendlyName']);
+    same('the customer password switch is a dropdown', 'dropdown', $options['customer_password']['Type']);
+    same('the customer password switch defaults to off', 'off', $options['customer_password']['Default']);
+    same(
+        'the customer password switch keeps the generated passwords as the default',
+        'Generated by the module (default)',
+        $options['customer_password']['Options']['off']
+    );
+    same(
+        'the customer password switch offers the customer password',
+        'Customer types it in the "Panel password" custom field',
+        $options['customer_password']['Options']['on']
+    );
+    same(
+        'the customer password switch explains the feature',
+        'Line and Sub-Reseller products. With "Customer types it", add a custom field to this product named "Panel password" (type Password, Show on Order Form). The customer chooses the password at checkout: 8 to 32 characters, no spaces and none of % & ? # / \\ +. After the account is created the module clears that field on the WHMCS service, and the password is kept on the service as usual. With the field empty, or with this option off, passwords are generated as today.',
+        $options['customer_password']['Description']
+    );
+
+    $visibility = xtreamai_accountTypeVisibility();
+    same(
+        'the visibility script watches the customer password slot',
+        1,
+        substr_count($visibility, 'packageconfigoption[12]')
+    );
+    same(
+        'the customer username slot is shown for lines and sub-resellers',
+        1,
+        substr_count($visibility, 'toggleCells($customer, !isTopUp);')
+    );
+    same(
+        'the customer password slot is shown for lines and sub-resellers',
+        1,
+        substr_count($visibility, 'toggleCells($password, !isTopUp);')
+    );
+
+    same(
+        'the reseller username field reads Reseller username',
+        'resA',
+        xtreamai_resellerUsernameField(array('customfields' => array('Reseller username' => ' resA ')))
+    );
+    same(
+        'the reseller username field reads Sub-Reseller username',
+        'resB',
+        xtreamai_resellerUsernameField(array('customfields' => array('Sub-Reseller username' => 'resB')))
+    );
+    same(
+        'the reseller username field reads Panel username',
+        'resC',
+        xtreamai_resellerUsernameField(array('customfields' => array('Panel username' => 'resC')))
+    );
+    same(
+        'the reseller username field reads Username',
+        'resD',
+        xtreamai_resellerUsernameField(array('customfields' => array('Username' => 'resD')))
+    );
+    same(
+        'the reseller username field reads the visible half of a piped name',
+        'resE',
+        xtreamai_resellerUsernameField(array('customfields' => array('reselleruser|Reseller username' => 'resE')))
+    );
+    same(
+        'the reseller username field reads the internal half of a piped name',
+        'resF',
+        xtreamai_resellerUsernameField(array('customfields' => array('Reseller username|Reseller account' => 'resF')))
+    );
+    same('the reseller username field is empty without custom fields', '', xtreamai_resellerUsernameField(array()));
+    same(
+        'the reseller username field is empty with a blank value',
+        '',
+        xtreamai_resellerUsernameField(array('customfields' => array('Reseller username' => '   ')))
+    );
+    same(
+        'the reseller username field ignores the line custom field',
+        '',
+        xtreamai_resellerUsernameField(array('customfields' => array('Line username' => 'cliente1')))
+    );
+
+    same(
+        'the shared custom field helper trims by default',
+        'userA',
+        xtreamai_customFieldValue(array('customfields' => array('Any name' => ' userA ')), array('any_name'))
+    );
+    same(
+        'the shared custom field helper can keep the raw value',
+        ' userA ',
+        xtreamai_customFieldValue(array('customfields' => array('Any name' => ' userA ')), array('any_name'), false)
+    );
+    same(
+        'the shared custom field helper unwraps an array value',
+        'userB',
+        xtreamai_customFieldValue(array('customfields' => array('Any name' => array(' userB '))), array('any_name'))
+    );
+    same(
+        'the shared custom field helper ignores an unknown key',
+        '',
+        xtreamai_customFieldValue(array('customfields' => array('Any name' => 'userA')), array('other_name'))
+    );
+    same(
+        'the shared custom field helper tolerates a missing map',
+        '',
+        xtreamai_customFieldValue(array(), array('any_name'))
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption11' => 'off',
+        'customfields' => array('Reseller username' => 'cliente_res'),
+    )));
+    same('a reseller product with the option off still provisions', 'success', $result);
+    same(
+        'a reseller product with the option off generates the username',
+        xtreamai_lineUsername(baseParams()),
+        apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][1] : null
+    );
+    same(
+        'a reseller product with the option off never searches the panel',
+        0,
+        count(apiCalls('findResellerByUsername'))
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Reseller username' => '   '),
+    )));
+    same('an on switch with an empty reseller field still provisions', 'success', $result);
+    same(
+        'an on switch with an empty reseller field generates the username',
+        xtreamai_lineUsername(baseParams()),
+        apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][1] : null
+    );
+    same('an empty reseller field never searches the panel', 0, count(apiCalls('findResellerByUsername')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Reseller username' => 'no good!'),
+    )));
+    same(
+        'an invalid reseller username fails with the exact message',
+        'The username "no good!" is not valid: use 3 to 32 letters, digits, dashes or underscores.',
+        $result
+    );
+    same('an invalid reseller username never creates the account', 0, count(apiCalls('createReseller')));
+    same(
+        'an invalid reseller username is never looked up on the panel',
+        0,
+        count(apiCalls('findResellerByUsername'))
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array(
+        'id' => '701',
+        'username' => 'taken_res',
+        'member_group_id' => 2,
+    );
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Reseller username' => 'taken_res'),
+    )));
+    same(
+        'a taken reseller username fails with the exact message',
+        'The reseller username "taken_res" is already taken on this panel. Ask the customer to choose another one.',
+        $result
+    );
+    same('a taken reseller username never creates the account', 0, count(apiCalls('createReseller')));
+    same(
+        'the taken reseller username is looked up on the panel',
+        array(1, 'taken_res'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
+    );
+    same('a taken reseller username links nothing', array(), \WhmcsXtreamAI\ServiceStore::$links);
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Reseller username' => 'cliente_res1'),
+    )));
+    same('a free reseller username provisions the account', 'success', $result);
+    same(
+        'the typed reseller username is sent to the panel',
+        'cliente_res1',
+        apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][1] : null
+    );
+    same('the free reseller username is looked up once', 1, count(apiCalls('findResellerByUsername')));
+    same(
+        'the generated reseller password reaches the panel',
+        xtreamai_linePassword(baseParams()),
+        apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][2] : null
+    );
+    same(
+        'the reseller account is linked with the typed username',
+        'cliente_res1',
+        \WhmcsXtreamAI\ServiceStore::$links ? \WhmcsXtreamAI\ServiceStore::$links[0]['username'] : null
+    );
+    same(
+        'the service keeps the typed reseller username',
+        'cliente_res1',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['username']
+    );
+    same(
+        'the service keeps the generated reseller password',
+        'encrypted:' . xtreamai_linePassword(baseParams()),
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['password']
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$keyTypeValue = 'reseller';
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption11' => 'on',
+        'customfields' => array('Reseller username' => 'cliente_res2'),
+    )));
+    same('a reseller key still provisions the typed username', 'success', $result);
+    same('a reseller key never looks the reseller up', 0, count(apiCalls('findResellerByUsername')));
+    same(
+        'a reseller key still creates the reseller account',
+        'cliente_res2',
+        apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][1] : null
+    );
+
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5101,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'reseller',
+        'configoption10' => 'any',
+        'configoption11' => 'on',
+        'configoption12' => 'off',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5102,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'reseller',
+        'configoption10' => 'any',
+        'configoption11' => 'off',
+        'configoption12' => 'off',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5103,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'reseller',
+        'configoption10' => 'any',
+        'configoption11' => 'on',
+        'configoption12' => 'off',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5104,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'reseller',
+        'configoption10' => 'any',
+        'configoption11' => 'on',
+        'configoption12' => 'off',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9101,
+        'type' => 'product',
+        'relid' => 5101,
+        'fieldname' => 'Reseller username',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9102,
+        'type' => 'product',
+        'relid' => 5102,
+        'fieldname' => 'Reseller username',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9103,
+        'type' => 'product',
+        'relid' => 5103,
+        'fieldname' => 'Account name',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9104,
+        'type' => 'product',
+        'relid' => 5104,
+        'fieldname' => 'reselleruser|Reseller username',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5105,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'reseller',
+        'configoption10' => 'any',
+        'configoption11' => 'on',
+        'configoption12' => 'on',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5106,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'line',
+        'configoption10' => 'any',
+        'configoption11' => 'on',
+        'configoption12' => 'on',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9105,
+        'type' => 'product',
+        'relid' => 5105,
+        'fieldname' => 'Panel password',
+        'fieldtype' => 'password',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9106,
+        'type' => 'product',
+        'relid' => 5106,
+        'fieldname' => 'pwd|Password',
+        'fieldtype' => 'password',
+    );
+
+    resetApi();
+    same(
+        'a reseller product with the option off is left alone',
+        array(),
+        $checkout::validateProduct(5102, array(9102 => 'resoff_user'), 44)
+    );
+    same('a reseller product with the option off logs the disabled decision', array('reseller_disabled'), logDecisions());
+    same('a reseller product with the option off never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    same('a reseller product without a username field is left alone', array(), $checkout::validateProduct(5101, array(), 44));
+    same('a reseller product without a username field logs the no-field decision', array('reseller_no_field'), logDecisions());
+    same('a reseller product without a username field never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    same(
+        'an invalid reseller username is refused with the shared message',
+        array('The username "ab" is not valid: use 3 to 32 letters, digits, dashes or underscores.'),
+        $checkout::validateProduct(5101, array(9101 => 'ab'), 44)
+    );
+    same('an invalid reseller username is never looked up on the panel', 0, count(apiCalls('findResellerByUsername')));
+    same('an invalid reseller username keeps the check decision', array('reseller_check'), logDecisions());
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array(
+        'id' => '702',
+        'username' => 'taken_any',
+        'member_group_id' => 2,
+    );
+    same(
+        'a taken reseller username is refused in the cart',
+        array('The reseller username "taken_any" is already taken. Choose another one.'),
+        $checkout::validateProduct(5101, array(9101 => '  taken_any  '), 44)
+    );
+    same(
+        'the taken reseller username is looked up with the trimmed value',
+        array(1, 'taken_any'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
+    );
+    same('a taken reseller username logs the check decision', array('reseller_check'), logDecisions());
+    same('a taken reseller username logs the matched field key', 'reseller_username', (string) logField('matched_field_key'));
+    same('a taken reseller username logs one error', 1, (int) logField('errors_count'));
+    same('a taken reseller username flags customer usernames', 'on', (string) logField('customer_username_enabled'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    same('a free reseller username passes the cart check', array(), $checkout::validateProduct(5101, array(9101 => 'free_any'), 44));
+    same('the free reseller username is looked up once', 1, count(apiCalls('findResellerByUsername')));
+    same('a free reseller username logs the check decision', array('reseller_check'), logDecisions());
+    same('a free reseller username logs no error', 0, (int) logField('errors_count'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$keyTypeValue = 'reseller';
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array(
+        'id' => '703',
+        'username' => 'reskey_any',
+        'member_group_id' => 2,
+    );
+    same(
+        'a reseller product on a reseller key is left to provisioning',
+        array(),
+        $checkout::validateProduct(5101, array(9101 => 'reskey_any'), 44)
+    );
+    same('a reseller key never looks a reseller up for a sub-reseller product', 0, count(apiCalls('findResellerByUsername')));
+    same('a reseller key logs the reseller key decision', array('reseller_reseller_key'), logDecisions());
+    same('the reseller key log marks the key type', 'reseller', (string) logField('key_type'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array(
+        'id' => '704',
+        'username' => 'single_any',
+        'member_group_id' => 2,
+    );
+    same(
+        'a single reseller field falls back to the only custom field',
+        array('The reseller username "single_any" is already taken. Choose another one.'),
+        $checkout::validateProduct(5103, array(9103 => 'single_any'), 44)
+    );
+    same('the single reseller field logs the fallback key', '*single*', (string) logField('matched_field_key'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array(
+        'id' => '705',
+        'username' => 'piped_any',
+        'member_group_id' => 2,
+    );
+    same(
+        'a piped reseller field matches the visible half',
+        array('The reseller username "piped_any" is already taken. Choose another one.'),
+        $checkout::validateProduct(5104, array(9104 => 'piped_any'), 44)
+    );
+    same('the piped reseller field logs the visible key', 'reseller_username', (string) logField('matched_field_key'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array(
+        'id' => '706',
+        'username' => 'Secret!Pass9',
+        'member_group_id' => 2,
+    );
+    same(
+        'a lone password field is never taken for the reseller username',
+        array(),
+        $checkout::validateProduct(5105, array(9105 => 'Secret!Pass9'), 44)
+    );
+    same('a lone password field logs the missing username field', array('reseller_no_field'), logDecisions());
+    same('a lone password field never reaches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+    same('a lone password field is still checked as a password', 'ok', (string) logField('password_check'));
+
+    resetApi();
+    same(
+        'a lone password field on a line product is never taken for the line username',
+        array(),
+        $checkout::validateProduct(5106, array(9106 => 'Secret!Pass9'), 44)
+    );
+    same('a lone line password field logs the missing username field', array('line_no_field'), logDecisions());
+    same('a lone line password field never reaches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+    same(
+        'a lone invalid password field on a line product answers the password message only',
+        array('The password is not valid: use 8 to 32 characters without spaces and without % & ? # / \\ +'),
+        $checkout::validateProduct(5106, array(9106 => 'bad pass'), 44)
+    );
+    same('a lone invalid password field never reaches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array(
+        'id' => '706',
+        'username' => 'memo_any',
+        'member_group_id' => 2,
+    );
+    $checkout::validateProduct(5101, array(9101 => 'memo_any'), 44);
+    $callsAfterReseller = count(\WhmcsXtreamAI\PanelApi::$calls);
+    $checkout::validateProduct(5101, array(9101 => 'memo_any'), 44);
+    same('a repeated reseller username is served from memory', $callsAfterReseller, count(\WhmcsXtreamAI\PanelApi::$calls));
+    same('a repeated reseller username logs one entry per fire', array('reseller_check', 'memo_reseller'), logDecisions());
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerError = 'Panel reseller list unavailable';
+    same(
+        'a reseller panel failure never blocks the checkout',
+        array(),
+        $checkout::validateProduct(5101, array(9101 => 'boom_any'), 44)
+    );
+    same(
+        'the reseller panel failure is written to the module log',
+        array('checkout_validate:Panel reseller list unavailable'),
+        loggedActions()
+    );
+    same('the reseller panel failure writes no decision line', array(''), logDecisions());
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => array()));
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5101,
+        'customfield' => array(9101 => 'cart_res_ok'),
+    ));
+    same('the cart update hook accepts a free reseller username', array(), $errors);
+    same('the cart update hook looks the reseller up', 1, count(apiCalls('findResellerByUsername')));
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => array()));
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5101,
+        'customfield' => array(9101 => 'ab'),
+    ));
+    same(
+        'the cart update hook refuses a short reseller username',
+        array('The username "ab" is not valid: use 3 to 32 letters, digits, dashes or underscores.'),
+        $errors
+    );
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array(
+        'id' => '708',
+        'username' => 'cart_res_taken',
+        'member_group_id' => 2,
+    );
+    $_SESSION = array(
+        'uid' => 44,
+        'cart' => array(
+            'products' => array(
+                array('pid' => 5101, 'customfields' => array(9101 => 'cart_res_taken')),
+                array('pid' => 5102, 'customfields' => array(9102 => 'cart_res_off')),
+            ),
+        ),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 44));
+    same(
+        'the checkout hook reports the reseller error of the cart',
+        array('The reseller username "cart_res_taken" is already taken. Choose another one.'),
+        $errors
+    );
+    same('the checkout hook logs the reseller decisions', array('reseller_check', 'reseller_disabled'), logDecisions());
+
+    section('Q. Customer password');
+
+    $passwordMessage = 'The password is not valid: use 8 to 32 characters without spaces and without % & ? # / \\ +';
+
+    same('a valid customer password passes', null, xtreamai_validateCustomerPassword('Abcdef12'));
+    same(
+        'the panel-safe special characters are allowed',
+        null,
+        xtreamai_validateCustomerPassword('@$=:;!*()\'~,.-_')
+    );
+    same('thirty two characters are accepted', null, xtreamai_validateCustomerPassword(str_repeat('a', 32)));
+    same('seven characters are refused', $passwordMessage, xtreamai_validateCustomerPassword('Abcdef1'));
+    same(
+        'more than thirty two characters are refused',
+        $passwordMessage,
+        xtreamai_validateCustomerPassword(str_repeat('a', 33))
+    );
+    same('an inner space is refused', $passwordMessage, xtreamai_validateCustomerPassword('Abc def12'));
+    same('a leading space is refused', $passwordMessage, xtreamai_validateCustomerPassword(' Abcdef12'));
+    same('a trailing space is refused', $passwordMessage, xtreamai_validateCustomerPassword('Abcdef12 '));
+    same('a tab is refused', $passwordMessage, xtreamai_validateCustomerPassword("Abcdef1\t2"));
+    same('a newline is refused', $passwordMessage, xtreamai_validateCustomerPassword("Abcdef1\n2"));
+
+    $blockedCharacters = array('%', '&', '?', '#', '/', '\\', '+');
+    foreach ($blockedCharacters as $blockedCharacter) {
+        same(
+            'a password with ' . $blockedCharacter . ' is refused',
+            $passwordMessage,
+            xtreamai_validateCustomerPassword('Abcdef1' . $blockedCharacter)
+        );
+    }
+
+    $passwordRule = new \ReflectionMethod('WhmcsXtreamAI\\CheckoutValidator', 'passwordError');
+    $passwordRule->setAccessible(true);
+    same(
+        'the addon and the server module share the password message',
+        xtreamai_validateCustomerPassword('bad pass1'),
+        $passwordRule->invoke(null, 'bad pass1')
+    );
+    same(
+        'the addon and the server module share the password rule',
+        xtreamai_validateCustomerPassword('Abcdef12'),
+        $passwordRule->invoke(null, 'Abcdef12')
+    );
+
+    same('the password helper reads the product switch', true, xtreamai_customerPasswordEnabled(array('configoption12' => 'on')));
+    same('the password helper is case insensitive', true, xtreamai_customerPasswordEnabled(array('configoption12' => ' ON ')));
+    same(
+        'the password helper reads the config options map',
+        true,
+        xtreamai_customerPasswordEnabled(array('configoptions' => array('customer_password' => 'on')))
+    );
+    same(
+        'the password helper unwraps an array value',
+        true,
+        xtreamai_customerPasswordEnabled(array('configoption12' => array('on')))
+    );
+    same('the password helper falls back to off', false, xtreamai_customerPasswordEnabled(array()));
+    same('the password helper ignores the off value', false, xtreamai_customerPasswordEnabled(array('configoption12' => 'off')));
+    same('the password helper ignores an unknown value', false, xtreamai_customerPasswordEnabled(array('configoption12' => 'maybe')));
+
+    same(
+        'the password field reads Panel password',
+        'Passw0rd1',
+        xtreamai_customerPasswordField(array('customfields' => array('Panel password' => 'Passw0rd1')))
+    );
+    same(
+        'the password field reads Password',
+        'Passw0rd2',
+        xtreamai_customerPasswordField(array('customfields' => array('Password' => 'Passw0rd2')))
+    );
+    same(
+        'the password field reads Line password',
+        'Passw0rd3',
+        xtreamai_customerPasswordField(array('customfields' => array('Line password' => 'Passw0rd3')))
+    );
+    same(
+        'the password field reads Reseller password',
+        'Passw0rd4',
+        xtreamai_customerPasswordField(array('customfields' => array('Reseller password' => 'Passw0rd4')))
+    );
+    same(
+        'the password field reads the visible half of a piped name',
+        'Passw0rd5',
+        xtreamai_customerPasswordField(array('customfields' => array('panelpass|Panel password' => 'Passw0rd5')))
+    );
+    same(
+        'the password field keeps the spaces as typed',
+        ' Passw0rd6 ',
+        xtreamai_customerPasswordField(array('customfields' => array('Panel password' => ' Passw0rd6 ')))
+    );
+    same('the password field is empty without custom fields', '', xtreamai_customerPasswordField(array()));
+    same(
+        'the password field ignores the username field',
+        '',
+        xtreamai_customerPasswordField(array('customfields' => array('Line username' => 'cliente1')))
+    );
+
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9150,
+        'type' => 'product',
+        'relid' => 6001,
+        'fieldname' => 'Panel password',
+        'fieldtype' => 'password',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9151,
+        'type' => 'product',
+        'relid' => 6001,
+        'fieldname' => 'Line username',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfieldsvalues'] = array(
+        array('id' => 7001, 'fieldid' => 9150, 'relid' => 135, 'value' => 'CustomerPass1'),
+        array('id' => 7002, 'fieldid' => 9150, 'relid' => 136, 'value' => 'OtherServicePass'),
+        array('id' => 7003, 'fieldid' => 9151, 'relid' => 135, 'value' => 'cliente135'),
+        array('id' => 7004, 'fieldid' => 9150, 'relid' => 137, 'value' => 'OtherProductPass'),
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    setCustomFieldValueRow(7001, 'CustomerPass1');
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'pid' => 6001,
+        'configoption12' => 'on',
+        'customfields' => array('Panel password' => 'CustomerPass1'),
+    )));
+    same('a line with a customer password provisions', 'success', $result);
+    same(
+        'the customer password is sent to the panel',
+        'CustomerPass1',
+        apiCalls('createLine') ? apiCalls('createLine')[0]['args'][4] : null
+    );
+    same(
+        'the customer password is stored on the service',
+        'encrypted:CustomerPass1',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['password']
+    );
+    same('the password custom field of the service is cleared', '', customFieldValueRow(7001));
+    same('the password custom field of another service is kept', 'OtherServicePass', customFieldValueRow(7002));
+    same('another custom field of the same service is kept', 'cliente135', customFieldValueRow(7003));
+    same('the password custom field of another service id is kept', 'OtherProductPass', customFieldValueRow(7004));
+    same('the customer password never reaches the module log', false, strpos(json_encode($GLOBALS['moduleLog']), 'CustomerPass1'));
+    same('a successful cleanup writes no extra log line', array('create'), logActions());
+
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'pid' => 6001,
+        'configoption12' => 'on',
+        'customfields' => array('Panel password' => 'Bad pass9'),
+    )));
+    same('an invalid customer password fails with the exact message', $passwordMessage, $result);
+    same('an invalid customer password never creates a line', 0, count(apiCalls('createLine')));
+    same('an invalid customer password never reaches the module log', false, strpos(json_encode($GLOBALS['moduleLog']), 'Bad pass9'));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    setCustomFieldValueRow(7001, 'LeftOverPass1');
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'pid' => 6001,
+        'configoption12' => 'on',
+        'customfields' => array('Panel password' => ''),
+    )));
+    same('an empty customer password still provisions', 'success', $result);
+    same(
+        'an empty customer password generates the password',
+        xtreamai_linePassword(baseParams()),
+        apiCalls('createLine') ? apiCalls('createLine')[0]['args'][4] : null
+    );
+    same('an empty customer password clears nothing', 'LeftOverPass1', customFieldValueRow(7001));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    setCustomFieldValueRow(7001, 'LeftOverPass2');
+    resetApi();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'pid' => 6001,
+        'configoption12' => 'off',
+        'customfields' => array('Panel password' => 'CustomerPass9'),
+    )));
+    same('an off password switch still provisions', 'success', $result);
+    same(
+        'an off password switch generates the password',
+        xtreamai_linePassword(baseParams()),
+        apiCalls('createLine') ? apiCalls('createLine')[0]['args'][4] : null
+    );
+    same('an off password switch clears nothing', 'LeftOverPass2', customFieldValueRow(7001));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    setCustomFieldValueRow(7001, 'CustomerPass2');
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'pid' => 6001,
+        'configoption11' => 'on',
+        'configoption12' => 'on',
+        'customfields' => array('Reseller username' => 'cliente_res3', 'Panel password' => 'CustomerPass2'),
+    )));
+    same('a reseller with a customer password provisions', 'success', $result);
+    same(
+        'the customer password reaches the reseller creation',
+        'CustomerPass2',
+        apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][2] : null
+    );
+    same(
+        'the reseller password is stored on the service',
+        'encrypted:CustomerPass2',
+        \WHMCS\Database\Capsule::$rows['tblhosting'][0]['password']
+    );
+    same('the reseller password custom field is cleared', '', customFieldValueRow(7001));
+    same('the customer password never reaches the reseller log', false, strpos(json_encode($GLOBALS['moduleLog']), 'CustomerPass2'));
+
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption11' => 'on',
+        'configoption12' => 'on',
+        'customfields' => array('Reseller username' => 'cliente_res4', 'Panel password' => 'short12'),
+    )));
+    same('an invalid reseller customer password fails with the exact message', $passwordMessage, $result);
+    same('an invalid reseller customer password never creates the account', 0, count(apiCalls('createReseller')));
+
+    resetApi();
+    setCustomFieldValueRow(7001, 'SafePass1');
+    setCustomFieldValueRow(7002, 'OtherServicePass');
+    $customFieldRows = \WHMCS\Database\Capsule::$rows['tblcustomfieldsvalues'];
+    xtreamai_clearCustomFieldValue(array('serviceid' => 135), array('panel_password'));
+    same('clearing without a pid changes no row', $customFieldRows, \WHMCS\Database\Capsule::$rows['tblcustomfieldsvalues']);
+    xtreamai_clearCustomFieldValue(array('pid' => 6001), array('panel_password'));
+    same('clearing without a service id changes no row', $customFieldRows, \WHMCS\Database\Capsule::$rows['tblcustomfieldsvalues']);
+    xtreamai_clearCustomFieldValue(array('pid' => 0, 'serviceid' => 0), array('panel_password'));
+    same('clearing without any id writes no log', array(), $GLOBALS['moduleLog']);
+    xtreamai_clearCustomFieldValue(array('pid' => 6001, 'serviceid' => 135), array('panel_password', 'password'));
+    same('clearing with both ids empties the field of the service', '', customFieldValueRow(7001));
+    same('clearing with both ids keeps another service untouched', 'OtherServicePass', customFieldValueRow(7002));
+    same('clearing with both ids writes no log', array(), $GLOBALS['moduleLog']);
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    $customFieldDefinitions = \WHMCS\Database\Capsule::$rows['tblcustomfields'];
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'] = (static function () {
+        throw new \RuntimeException('Custom fields table unavailable');
+        yield;
+    })();
+    $result = xtreamai_CreateAccount(baseParams(array(
+        'pid' => 6001,
+        'configoption12' => 'on',
+        'customfields' => array('Panel password' => 'CustomerPass3'),
+    )));
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'] = $customFieldDefinitions;
+    same('a failing custom field cleanup still provisions the line', 'success', $result);
+    $cleanupLogs = array();
+    foreach ($GLOBALS['moduleLog'] as $entry) {
+        if ((string) $entry[1] === 'clear_custom_field') {
+            $cleanupLogs[] = isset($entry[3]) ? (string) $entry[3] : '';
+        }
+    }
+    same(
+        'the failing cleanup is written to the module log',
+        array('Custom fields table unavailable'),
+        $cleanupLogs
+    );
+    same('the failing cleanup never logs the password', false, strpos(json_encode($GLOBALS['moduleLog']), 'CustomerPass3'));
+
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5201,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'line',
+        'configoption10' => 'any',
+        'configoption11' => 'on',
+        'configoption12' => 'on',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5202,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'reseller',
+        'configoption10' => 'any',
+        'configoption11' => 'on',
+        'configoption12' => 'on',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5203,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'line',
+        'configoption10' => 'any',
+        'configoption11' => 'on',
+        'configoption12' => 'off',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9201,
+        'type' => 'product',
+        'relid' => 5201,
+        'fieldname' => 'Line username',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9202,
+        'type' => 'product',
+        'relid' => 5201,
+        'fieldname' => 'Panel password',
+        'fieldtype' => 'password',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9203,
+        'type' => 'product',
+        'relid' => 5202,
+        'fieldname' => 'Reseller username',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9204,
+        'type' => 'product',
+        'relid' => 5202,
+        'fieldname' => 'Panel password',
+        'fieldtype' => 'password',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9205,
+        'type' => 'product',
+        'relid' => 5203,
+        'fieldname' => 'Line username',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9206,
+        'type' => 'product',
+        'relid' => 5203,
+        'fieldname' => 'Panel password',
+        'fieldtype' => 'password',
+    );
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    same(
+        'a line with a valid customer password passes the cart',
+        array(),
+        $checkout::validateProduct(5201, array(9201 => 'pwd_line_a', 9202 => 'Customer9Ok'), 44)
+    );
+    same('a valid customer password logs the password check', 'ok', (string) logField('password_check'));
+    same('a valid customer password logs the password field key', 'panel_password', (string) logField('password_field_key'));
+    same('a valid customer password logs the password length', strlen('Customer9Ok'), (int) logField('password_len'));
+    same('a valid customer password logs the raw switch', 'on', (string) logField('customer_password_enabled'));
+    same('a valid customer password keeps the line decision', array('line_check'), logDecisions());
+    same('a valid customer password never reaches the log request', false, strpos((string) checkoutLogs()[0][2], 'Customer9Ok'));
+    same('a valid customer password never reaches the log response', false, strpos(logResponse(checkoutLogs()[0]), 'Customer9Ok'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    $errors = $checkout::validateProduct(5201, array(9201 => 'pwd_line_b', 9202 => 'Bad pass9'), 44);
+    same('an invalid customer password is refused in the cart', array($passwordMessage), $errors);
+    same('an invalid customer password logs the invalid check', 'invalid', (string) logField('password_check'));
+    same('an invalid customer password logs the password length', strlen('Bad pass9'), (int) logField('password_len'));
+    same('an invalid customer password keeps the line decision', array('line_check'), logDecisions());
+    same('an invalid customer password logs the merged error count', 1, (int) logField('errors_count'));
+    same('an invalid customer password never reaches the log', false, strpos((string) checkoutLogs()[0][2], 'Bad pass9'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    same(
+        'a line with an empty customer password passes the cart',
+        array(),
+        $checkout::validateProduct(5201, array(9201 => 'pwd_line_c', 9202 => ''), 44)
+    );
+    same('an empty customer password logs the empty check', 'empty', (string) logField('password_check'));
+    same('an empty customer password logs no length', 0, (int) logField('password_len'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    $errors = $checkout::validateProduct(5201, array(9201 => 'pwd_line_e', 9202 => ' Customer9Ok '), 44);
+    same('a padded customer password is refused by the cart', array($passwordMessage), $errors);
+    same('a padded customer password logs the real length', strlen(' Customer9Ok '), (int) logField('password_len'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    same(
+        'a line with the password option off ignores the field',
+        array(),
+        $checkout::validateProduct(5203, array(9205 => 'pwd_line_d', 9206 => 'Bad pass9'), 44)
+    );
+    same('the password option off logs the off check', 'off', (string) logField('password_check'));
+    same('the password option off logs the raw switch', 'off', (string) logField('customer_password_enabled'));
+    same('the password option off logs no password field key', '', (string) logField('password_field_key'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    same(
+        'a reseller with a valid customer password passes the cart',
+        array(),
+        $checkout::validateProduct(5202, array(9203 => 'pwd_res_a', 9204 => 'Customer9Ok'), 44)
+    );
+    same('the reseller password check logs the ok state', 'ok', (string) logField('password_check'));
+    same('a reseller with a valid customer password keeps the reseller decision', array('reseller_check'), logDecisions());
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array(
+        'id' => '710',
+        'username' => 'pwd_res_b',
+        'member_group_id' => 2,
+    );
+    $errors = $checkout::validateProduct(5202, array(9203 => 'pwd_res_b', 9204 => 'Bad pass9'), 44);
+    same(
+        'a taken reseller username and an invalid password report both',
+        array(
+            'The reseller username "pwd_res_b" is already taken. Choose another one.',
+            $passwordMessage,
+        ),
+        $errors
+    );
+    same('the reseller password error logs both errors', 2, (int) logField('errors_count'));
+    same('the reseller password error logs the invalid check', 'invalid', (string) logField('password_check'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    $checkout::validateProduct(5202, array(9203 => 'pwd_res_c', 9204 => 'Customer9Ok'), 44);
+    $errors = $checkout::validateProduct(5202, array(9203 => 'pwd_res_c', 9204 => 'Bad pass9'), 44);
+    same('the memo of the username does not cover the password', array($passwordMessage), $errors);
+    same('the repeated reseller username is served from memory', 1, count(apiCalls('findResellerByUsername')));
+    same('the second reseller password check is logged', 'invalid', (string) logField('password_check'));
+    same('the repeated reseller password error logs one error', 1, (int) logField('errors_count'));
+
+    resetApi();
+    $_SESSION = array('uid' => 44, 'cart' => array('products' => array()));
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5201,
+        'customfield' => array(9201 => 'pwd_hook_a', 9202 => 'Bad pass9'),
+    ));
+    same('the cart update hook returns the password error', array($passwordMessage), $errors);
+    same('the cart update hook never writes the password', false, strpos(json_encode($GLOBALS['moduleLog']), 'Bad pass9'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    $_SESSION = array(
+        'uid' => 44,
+        'cart' => array(
+            'products' => array(
+                array('pid' => 5201, 'customfields' => array(9201 => 'pwd_cart_a', 9202 => 'Customer9Ok')),
+                array('pid' => 5202, 'customfields' => array(9203 => 'pwd_cart_b', 9204 => 'Bad pass9')),
+            ),
+        ),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 44));
+    same('the checkout hook reports the invalid password of the reseller line', array($passwordMessage), $errors);
+    same('the checkout hook never writes a password', false, strpos(json_encode($GLOBALS['moduleLog']), 'Customer9Ok'));
 
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";
     exit($GLOBALS['failed'] === 0 ? 0 : 1);

@@ -8,6 +8,8 @@ use WHMCS\Database\Capsule;
 
 final class CheckoutValidator
 {
+    private const PASSWORD_FIELDS = ['panel_password', 'password', 'line_password', 'reseller_password'];
+
     private static $memo = [];
 
     public static function validateProduct(int $pid, array $customFieldsById, int $clientId): array
@@ -51,11 +53,16 @@ final class CheckoutValidator
             }
 
             if ($accountType === 'reseller') {
-                return self::report($pid, 'reseller_type', [], $ctx);
+                $ctx['customer_username_enabled'] = strtolower(trim((string) ($product->configoption11 ?? '')));
+                $outcome = self::validateReseller($pid, $product, $panelId, $fields, $customFieldsById, $ctx);
+                $outcome = self::withPassword($product, $fields, $outcome);
+
+                return self::report($pid, $outcome['decision'], $outcome['errors'], $outcome['ctx'], $outcome['logged']);
             }
 
             $ctx['customer_username_enabled'] = strtolower(trim((string) ($product->configoption11 ?? '')));
             $outcome = self::validateLine($pid, $product, $panelId, $fields, $customFieldsById, $ctx);
+            $outcome = self::withPassword($product, $fields, $outcome);
 
             return self::report($pid, $outcome['decision'], $outcome['errors'], $outcome['ctx'], $outcome['logged']);
         } catch (\Throwable $e) {
@@ -110,6 +117,12 @@ final class CheckoutValidator
 
         if (count($rows) !== 1) {
             return ['key' => '', 'value' => ''];
+        }
+
+        foreach (self::fieldKeys((string) ($rows[0]->fieldname ?? '')) as $key) {
+            if (in_array($key, self::PASSWORD_FIELDS, true)) {
+                return ['key' => '', 'value' => ''];
+            }
         }
 
         $value = $values[(int) ($rows[0]->id ?? 0)] ?? '';
@@ -254,6 +267,141 @@ final class CheckoutValidator
         return self::outcome('topup_admin_check', [], $ctx);
     }
 
+    private static function validateReseller(
+        int $pid,
+        object $product,
+        int $panelId,
+        array $fields,
+        array $values,
+        array $ctx
+    ): array {
+        if (!self::customerUsernameEnabled($product)) {
+            return self::outcome('reseller_disabled', [], $ctx);
+        }
+
+        $match = self::fieldMatch($fields, ['reseller_username', 'sub_reseller_username', 'panel_username', 'username']);
+        if ($match['value'] === '') {
+            $match = self::singleField($pid, $values);
+        }
+
+        if ($match['value'] === '') {
+            return self::outcome('reseller_no_field', [], $ctx);
+        }
+
+        $cacheKey = self::cacheKey($pid, 'reseller_username', $match['value']);
+        if (array_key_exists($cacheKey, self::$memo)) {
+            return self::outcome(
+                'memo_reseller',
+                self::$memo[$cacheKey],
+                self::matchedContext($ctx, $match['key'], $match['value'])
+            );
+        }
+
+        try {
+            $outcome = self::resellerErrors($panelId, $match['value'], $ctx);
+        } catch (\Throwable $e) {
+            self::logFailure($pid, $e);
+            self::$memo[$cacheKey] = [];
+
+            return self::outcome('reseller_error', [], $ctx, true);
+        }
+
+        self::$memo[$cacheKey] = $outcome['errors'];
+
+        return self::outcome(
+            $outcome['decision'],
+            $outcome['errors'],
+            self::matchedContext($outcome['ctx'], $match['key'], $match['value'])
+        );
+    }
+
+    private static function resellerErrors(int $panelId, string $username, array $ctx): array
+    {
+        if (preg_match('/^[A-Za-z0-9_-]{3,32}$/', $username) !== 1) {
+            return self::outcome('reseller_check', [
+                'The username "' . self::shown($username)
+                . '" is not valid: use 3 to 32 letters, digits, dashes or underscores.',
+            ], $ctx);
+        }
+
+        if (PanelApi::keyType($panelId) !== 'admin') {
+            return self::outcome('reseller_reseller_key', [], $ctx);
+        }
+
+        if (PanelApi::findResellerByUsername($panelId, $username) !== null) {
+            return self::outcome('reseller_check', [
+                'The reseller username "' . self::shown($username) . '" is already taken. Choose another one.',
+            ], $ctx);
+        }
+
+        return self::outcome('reseller_check', [], $ctx);
+    }
+
+    private static function withPassword(object $product, array $fields, array $outcome): array
+    {
+        $check = self::passwordCheck($product, $fields);
+        foreach ($check['ctx'] as $key => $value) {
+            $outcome['ctx'][$key] = $value;
+        }
+        if ($check['error'] !== '') {
+            $outcome['errors'][] = $check['error'];
+        }
+
+        return $outcome;
+    }
+
+    private static function passwordCheck(object $product, array $fields): array
+    {
+        $raw = strtolower(trim((string) ($product->configoption12 ?? '')));
+        $ctx = [
+            'customer_password_enabled' => $raw,
+            'password_field_key' => '',
+            'password_len' => 0,
+            'password_check' => 'off',
+        ];
+        if ($raw !== 'on') {
+            return ['ctx' => $ctx, 'error' => ''];
+        }
+
+        $value = '';
+        foreach ($fields as $key => $fieldValue) {
+            if (!in_array((string) $key, self::PASSWORD_FIELDS, true)) {
+                continue;
+            }
+            if ($ctx['password_field_key'] === '') {
+                $ctx['password_field_key'] = (string) $key;
+            }
+            $typed = (string) $fieldValue;
+            if ($typed === '') {
+                continue;
+            }
+            $value = $typed;
+            $ctx['password_field_key'] = (string) $key;
+            break;
+        }
+
+        $ctx['password_len'] = strlen($value);
+        if ($value === '') {
+            $ctx['password_check'] = 'empty';
+
+            return ['ctx' => $ctx, 'error' => ''];
+        }
+
+        $error = self::passwordError($value);
+        $ctx['password_check'] = $error === null ? 'ok' : 'invalid';
+
+        return ['ctx' => $ctx, 'error' => $error === null ? '' : $error];
+    }
+
+    private static function passwordError(string $password): ?string
+    {
+        if (preg_match('/^[^\s%&?#\/\\\\+]{8,32}$/', $password) === 1) {
+            return null;
+        }
+
+        return 'The password is not valid: use 8 to 32 characters without spaces and without % & ? # / \ +';
+    }
+
     private static function scope(object $product): string
     {
         $raw = strtolower(trim((string) ($product->configoption10 ?? '')));
@@ -261,14 +409,14 @@ final class CheckoutValidator
         return $raw === 'linked' ? 'linked' : 'any';
     }
 
-    private static function lineEnabled(object $product): bool
+    private static function customerUsernameEnabled(object $product): bool
     {
         return strtolower(trim((string) ($product->configoption11 ?? ''))) === 'on';
     }
 
     private static function validateLine(int $pid, object $product, int $panelId, array $fields, array $values, array $ctx): array
     {
-        if (!self::lineEnabled($product)) {
+        if (!self::customerUsernameEnabled($product)) {
             return self::outcome('line_disabled', [], $ctx);
         }
 
