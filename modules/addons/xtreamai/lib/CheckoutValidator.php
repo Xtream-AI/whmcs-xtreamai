@@ -12,37 +12,52 @@ final class CheckoutValidator
 
     public static function validateProduct(int $pid, array $customFieldsById, int $clientId): array
     {
+        $ctx = self::logContext($customFieldsById, $clientId);
+
         if ($pid < 1) {
-            return [];
+            return self::report($pid, 'no_pid', [], $ctx);
         }
 
         try {
             $product = Capsule::table('tblproducts')->where('id', $pid)->first();
             if ($product === null) {
-                return [];
+                return self::report($pid, 'no_product', [], $ctx);
             }
 
-            if (strtolower(trim((string) ($product->servertype ?? ''))) !== 'xtreamai') {
-                return [];
+            $ctx['servertype'] = strtolower(trim((string) ($product->servertype ?? '')));
+            if ($ctx['servertype'] !== 'xtreamai') {
+                return self::report($pid, 'not_xtreamai', [], $ctx);
             }
 
             $panelId = (int) ($product->configoption1 ?? 0);
+            $ctx['panel_id'] = $panelId;
             if ($panelId < 1) {
-                return [];
+                return self::report($pid, 'no_panel', [], $ctx);
             }
 
+            $ctx['key_type'] = self::panelKeyType($panelId);
+
             $fields = self::productFields($pid, $customFieldsById);
+            $ctx['field_names_on_product'] = self::productFieldNames($pid);
+
             $accountType = strtolower(trim((string) ($product->configoption5 ?? '')));
+            $ctx['account_type'] = $accountType;
 
             if ($accountType === 'topup') {
-                return self::validateTopUp($pid, $product, $panelId, $fields, $clientId);
+                $ctx['topup_scope'] = self::scope($product);
+                $outcome = self::validateTopUp($pid, $product, $panelId, $fields, $clientId, $ctx);
+
+                return self::report($pid, $outcome['decision'], $outcome['errors'], $outcome['ctx'], $outcome['logged']);
             }
 
             if ($accountType === 'reseller') {
-                return [];
+                return self::report($pid, 'reseller_type', [], $ctx);
             }
 
-            return self::validateLine($pid, $product, $panelId, $fields);
+            $ctx['customer_username_enabled'] = strtolower(trim((string) ($product->configoption11 ?? '')));
+            $outcome = self::validateLine($pid, $product, $panelId, $fields, $ctx);
+
+            return self::report($pid, $outcome['decision'], $outcome['errors'], $outcome['ctx'], $outcome['logged']);
         } catch (\Throwable $e) {
             self::logFailure($pid, $e);
 
@@ -75,7 +90,7 @@ final class CheckoutValidator
         return $fields;
     }
 
-    private static function fieldValue(array $fields, array $names): string
+    private static function fieldMatch(array $fields, array $names): array
     {
         foreach ($fields as $key => $value) {
             if (!in_array($key, $names, true)) {
@@ -84,11 +99,11 @@ final class CheckoutValidator
 
             $typed = trim((string) $value);
             if ($typed !== '') {
-                return $typed;
+                return ['key' => (string) $key, 'value' => $typed];
             }
         }
 
-        return '';
+        return ['key' => '', 'value' => ''];
     }
 
     private static function optionKey(string $name): string
@@ -117,68 +132,80 @@ final class CheckoutValidator
         return substr($clean, 0, 40);
     }
 
-    private static function validateTopUp(int $pid, object $product, int $panelId, array $fields, int $clientId): array
+    private static function validateTopUp(int $pid, object $product, int $panelId, array $fields, int $clientId, array $ctx): array
     {
-        $username = self::fieldValue($fields, ['reseller_username', 'panel_username', 'sub_reseller_username']);
-        if ($username === '') {
-            return [];
+        $match = self::fieldMatch($fields, ['reseller_username', 'panel_username', 'sub_reseller_username']);
+        if ($match['value'] === '') {
+            return self::outcome('topup_no_field', [], $ctx);
         }
 
-        $cacheKey = self::cacheKey($pid, 'reseller_username', $username);
+        $cacheKey = self::cacheKey($pid, 'reseller_username', $match['value']);
         if (array_key_exists($cacheKey, self::$memo)) {
-            return self::$memo[$cacheKey];
+            return self::outcome(
+                'memo_topup',
+                self::$memo[$cacheKey],
+                self::matchedContext($ctx, $match['key'], $match['value'])
+            );
         }
 
         try {
-            $errors = self::topUpErrors($product, $panelId, $username, $clientId);
+            $outcome = self::topUpErrors($product, $panelId, $match['value'], $clientId, $ctx);
         } catch (\Throwable $e) {
             self::logFailure($pid, $e);
-            $errors = [];
+            self::$memo[$cacheKey] = [];
+
+            return self::outcome('topup_error', [], $ctx, true);
         }
 
-        self::$memo[$cacheKey] = $errors;
+        self::$memo[$cacheKey] = $outcome['errors'];
 
-        return $errors;
+        return self::outcome(
+            $outcome['decision'],
+            $outcome['errors'],
+            self::matchedContext($outcome['ctx'], $match['key'], $match['value'])
+        );
     }
 
-    private static function topUpErrors(object $product, int $panelId, string $username, int $clientId): array
+    private static function topUpErrors(object $product, int $panelId, string $username, int $clientId, array $ctx): array
     {
         if (self::scope($product) === 'linked') {
             if ($clientId < 1) {
-                return [];
+                return self::outcome('topup_linked_no_client', [], $ctx);
             }
 
             foreach (ServiceStore::resellerServicesForClient($clientId, $panelId) as $candidate) {
                 if (strcasecmp((string) ($candidate['username'] ?? ''), $username) === 0) {
-                    return [];
+                    return self::outcome('topup_linked_check', [], $ctx);
                 }
             }
 
-            return [
+            return self::outcome('topup_linked_check', [
                 'The reseller username "' . self::shown($username)
                 . '" does not match any of your Sub-Reseller accounts.',
-            ];
+            ], $ctx);
         }
 
         if (PanelApi::keyType($panelId) !== 'admin') {
-            return [];
+            return self::outcome('topup_reseller_key', [], $ctx);
         }
 
         $reseller = PanelApi::findResellerByUsername($panelId, $username);
         if ($reseller === null) {
-            return [
+            return self::outcome('topup_admin_check', [
                 'The reseller username "' . self::shown($username)
                 . '" was not found. Check the spelling and try again.',
-            ];
+            ], $ctx);
         }
 
         $adminOwnerId = PanelApi::adminOwnerMemberId($panelId);
         if ((int) ($reseller['member_group_id'] ?? 0) === 1
             || ($adminOwnerId !== null && (string) ($reseller['id'] ?? '') === (string) $adminOwnerId)) {
-            return ['The reseller username "' . self::shown($username) . '" cannot receive a top-up.'];
+            return self::outcome('topup_admin_check', [
+                'The reseller username "' . self::shown($username) . '" cannot receive a top-up.',
+            ], $ctx);
         }
 
-        return [];
+        return self::outcome('topup_admin_check', [], $ctx);
     }
 
     private static function scope(object $product): string
@@ -188,32 +215,43 @@ final class CheckoutValidator
         return $raw === 'linked' ? 'linked' : 'any';
     }
 
-    private static function validateLine(int $pid, object $product, int $panelId, array $fields): array
+    private static function lineEnabled(object $product): bool
     {
-        if (strtolower(trim((string) ($product->configoption11 ?? ''))) !== 'on') {
-            return [];
+        return strtolower(trim((string) ($product->configoption11 ?? ''))) === 'on';
+    }
+
+    private static function validateLine(int $pid, object $product, int $panelId, array $fields, array $ctx): array
+    {
+        if (!self::lineEnabled($product)) {
+            return self::outcome('line_disabled', [], $ctx);
         }
 
-        $username = self::fieldValue($fields, ['line_username', 'username', 'panel_username']);
-        if ($username === '') {
-            return [];
+        $match = self::fieldMatch($fields, ['line_username', 'username', 'panel_username']);
+        if ($match['value'] === '') {
+            return self::outcome('line_no_field', [], $ctx);
         }
 
-        $cacheKey = self::cacheKey($pid, 'line_username', $username);
+        $cacheKey = self::cacheKey($pid, 'line_username', $match['value']);
         if (array_key_exists($cacheKey, self::$memo)) {
-            return self::$memo[$cacheKey];
+            return self::outcome(
+                'memo_line',
+                self::$memo[$cacheKey],
+                self::matchedContext($ctx, $match['key'], $match['value'])
+            );
         }
 
         try {
-            $errors = self::lineErrors($panelId, $username);
+            $errors = self::lineErrors($panelId, $match['value']);
         } catch (\Throwable $e) {
             self::logFailure($pid, $e);
-            $errors = [];
+            self::$memo[$cacheKey] = [];
+
+            return self::outcome('line_error', [], $ctx, true);
         }
 
         self::$memo[$cacheKey] = $errors;
 
-        return $errors;
+        return self::outcome('line_check', $errors, self::matchedContext($ctx, $match['key'], $match['value']));
     }
 
     private static function lineErrors(int $panelId, string $username): array
@@ -237,6 +275,111 @@ final class CheckoutValidator
     private static function cacheKey(int $pid, string $field, string $username): string
     {
         return $pid . '|' . $field . '|' . $username;
+    }
+
+    private static function logContext(array $customFieldsById, int $clientId): array
+    {
+        $ids = [];
+        foreach (array_keys($customFieldsById) as $key) {
+            $ids[] = (int) $key;
+        }
+
+        return [
+            'servertype' => '',
+            'panel_id' => 0,
+            'account_type' => '',
+            'key_type' => '',
+            'client_id' => $clientId,
+            'input_field_ids' => self::shortList($ids),
+            'field_names_on_product' => [],
+            'matched_field_key' => '',
+            'matched_field_value_len' => 0,
+            'errors_count' => 0,
+        ];
+    }
+
+    private static function panelKeyType(int $panelId): string
+    {
+        try {
+            $panel = PanelStore::find($panelId);
+            if ($panel === null) {
+                return '';
+            }
+
+            return (string) ($panel->key_type ?? '');
+        } catch (\Throwable $e) {
+            return '';
+        }
+    }
+
+    private static function productFieldNames(int $pid): array
+    {
+        try {
+            $rows = Capsule::table('tblcustomfields')
+                ->where('type', 'product')
+                ->where('relid', $pid)
+                ->get();
+
+            $names = [];
+            foreach ($rows as $row) {
+                $name = (string) ($row->fieldname ?? '');
+                $names[] = ['name' => $name, 'key' => self::optionKey($name)];
+            }
+
+            return self::shortList($names);
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+    private static function shortList(array $values): array
+    {
+        return array_slice($values, 0, 20);
+    }
+
+    private static function matchedContext(array $ctx, string $matchedKey, string $username): array
+    {
+        $ctx['matched_field_key'] = $matchedKey;
+        $ctx['matched_field_value_len'] = strlen($username);
+
+        return $ctx;
+    }
+
+    private static function outcome(string $decision, array $errors, array $ctx, bool $logged = false): array
+    {
+        return ['decision' => $decision, 'errors' => $errors, 'ctx' => $ctx, 'logged' => $logged];
+    }
+
+    private static function report(int $pid, string $decision, array $errors, array $ctx, bool $logged = false): array
+    {
+        if (!$logged) {
+            $ctx['errors_count'] = count($errors);
+            self::logDecision($pid, $decision, $ctx);
+        }
+
+        return $errors;
+    }
+
+    private static function logDecision(int $pid, string $decision, array $ctx): void
+    {
+        if (!function_exists('logModuleCall')) {
+            return;
+        }
+
+        try {
+            $request = json_encode(['product_id' => $pid] + $ctx);
+            if (!is_string($request)) {
+                $request = 'product_id=' . $pid;
+            }
+
+            logModuleCall(
+                'xtreamai',
+                'checkout_validate',
+                $request,
+                'decision=' . $decision . ' errors=' . (int) ($ctx['errors_count'] ?? 0)
+            );
+        } catch (\Throwable $ignored) {
+        }
     }
 
     private static function logFailure(int $pid, \Throwable $e): void

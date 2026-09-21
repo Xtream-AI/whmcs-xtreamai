@@ -439,6 +439,10 @@ namespace {
 
     function logModuleCall()
     {
+        if (!empty($GLOBALS['moduleLogThrows'])) {
+            throw new \RuntimeException('module log unavailable');
+        }
+
         $GLOBALS['moduleLog'][] = func_get_args();
     }
 
@@ -531,6 +535,65 @@ namespace {
         }
 
         return $out;
+    }
+
+    function checkoutLogs()
+    {
+        $out = array();
+        foreach ($GLOBALS['moduleLog'] as $entry) {
+            if ((string) $entry[1] === 'checkout_validate') {
+                $out[] = $entry;
+            }
+        }
+
+        return $out;
+    }
+
+    function logRequest(array $entry)
+    {
+        $decoded = json_decode(isset($entry[2]) ? (string) $entry[2] : '', true);
+
+        return is_array($decoded) ? $decoded : array();
+    }
+
+    function logResponse(array $entry)
+    {
+        return isset($entry[3]) ? (string) $entry[3] : '';
+    }
+
+    function logDecision(array $entry)
+    {
+        $response = logResponse($entry);
+        if (strpos($response, 'decision=') !== 0) {
+            return '';
+        }
+
+        $rest = substr($response, 9);
+        $space = strpos($rest, ' ');
+
+        return $space === false ? $rest : substr($rest, 0, $space);
+    }
+
+    function logDecisions()
+    {
+        $out = array();
+        foreach (checkoutLogs() as $entry) {
+            $out[] = logDecision($entry);
+        }
+
+        return $out;
+    }
+
+    function logField($name)
+    {
+        $entries = checkoutLogs();
+        if (!$entries) {
+            return null;
+        }
+
+        $request = logRequest($entries[count($entries) - 1]);
+
+        return array_key_exists($name, $request) ? $request[$name] : null;
     }
 
     function panelWrites()
@@ -2419,6 +2482,318 @@ namespace {
     $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 0));
     same('the checkout hook leaves a linked top-up alone without a client', array(), $errors);
     same('a checkout without a client reads no sub-reseller list', array(), \WhmcsXtreamAI\ServiceStore::$resellerLookups);
+
+    section('M. Checkout diagnostic logging');
+
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5008,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'topup',
+        'configoption10' => 'any',
+        'configoption11' => 'off',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9009,
+        'type' => 'product',
+        'relid' => 5008,
+        'fieldname' => 'Reseller',
+        'fieldtype' => 'text',
+    );
+
+    resetApi();
+    same(
+        'a top-up field named only Reseller matches no key',
+        array(),
+        $checkout::validateProduct(5008, array(9009 => 'ghost_reseller'), 44)
+    );
+    same('the silent top-up mismatch writes exactly one log', 1, count(checkoutLogs()));
+    same('the silent top-up mismatch logs the no-field decision', array('topup_no_field'), logDecisions());
+    same(
+        'the silent top-up mismatch answers with the decision and the error count',
+        'decision=topup_no_field errors=0',
+        logResponse(checkoutLogs()[0])
+    );
+    same('the silent top-up mismatch names no matched field', '', (string) logField('matched_field_key'));
+    same('the silent top-up mismatch carries no value length', 0, (int) logField('matched_field_value_len'));
+    same('the silent top-up mismatch carries no error', 0, (int) logField('errors_count'));
+    same(
+        'the log lists the custom fields the product carries',
+        array(array('name' => 'Reseller', 'key' => 'reseller')),
+        logField('field_names_on_product')
+    );
+    same('the log carries the product id', 5008, (int) logField('product_id'));
+    same('the log carries the panel id', 1, (int) logField('panel_id'));
+    same('the log carries the account type', 'topup', (string) logField('account_type'));
+    same('the log carries the top-up scope', 'any', (string) logField('topup_scope'));
+    same('the log carries the panel key type', 'admin', (string) logField('key_type'));
+    same('the log carries the client id', 44, (int) logField('client_id'));
+    same('the log carries the field ids the cart sent', array(9009), logField('input_field_ids'));
+    same('the log never writes the typed username', false, strpos((string) checkoutLogs()[0][2], 'ghost_reseller'));
+    same(
+        'a top-up log carries no line flag',
+        false,
+        array_key_exists('customer_username_enabled', logRequest(checkoutLogs()[0]))
+    );
+
+    resetApi();
+    same('an empty product id is still ignored', array(), $checkout::validateProduct(0, array(), 44));
+    same('an empty product id logs one entry', array('no_pid'), logDecisions());
+
+    resetApi();
+    same('an unknown product is still ignored', array(), $checkout::validateProduct(5999, array(), 44));
+    same('an unknown product logs one entry', array('no_product'), logDecisions());
+
+    resetApi();
+    same('another server type is still ignored', array(), $checkout::validateProduct(5001, array(9006 => 'mel'), 44));
+    same('another server type logs one entry', array('not_xtreamai'), logDecisions());
+    same('the log of an ignored server type carries the server type', 'cpanel', (string) logField('servertype'));
+
+    resetApi();
+    same('a sub-reseller product is still ignored', array(), $checkout::validateProduct(5007, array(), 44));
+    same('a sub-reseller product logs one entry', array('reseller_type'), logDecisions());
+
+    resetApi();
+    same(
+        'a product without a panel id is still ignored',
+        array(),
+        $checkout::validateProduct(5006, array(9007 => 'no_panel_user'), 44)
+    );
+    same('a product without a panel id logs one entry', array('no_panel'), logDecisions());
+    same('the log of a product without a panel carries no panel id', 0, (int) logField('panel_id'));
+    same('the log of a product without a panel carries no field names', array(), logField('field_names_on_product'));
+
+    resetApi();
+    same(
+        'a line without customer usernames is still ignored',
+        array(),
+        $checkout::validateProduct(5004, array(9003 => 'Any Name!'), 44)
+    );
+    same('a line without customer usernames logs one entry', array('line_disabled'), logDecisions());
+    same('the disabled line log carries the raw flag', 'off', (string) logField('customer_username_enabled'));
+
+    resetApi();
+    same('a line with an empty username is still ignored', array(), $checkout::validateProduct(5005, array(9008 => '   '), 44));
+    same('a line with an empty username logs one entry', array('line_no_field'), logDecisions());
+    same('a line without a username never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    same('a free username still passes', array(), $checkout::validateProduct(5005, array(9004 => 'diag_free_name'), 44));
+    same('a passed line check logs one entry', array('line_check'), logDecisions());
+    same('the passed line check names the matched field key', 'line_username', (string) logField('matched_field_key'));
+    same('the passed line check logs the typed value length', strlen('diag_free_name'), (int) logField('matched_field_value_len'));
+    same('the passed line check logs the error count', 0, (int) logField('errors_count'));
+    same('the passed line check flags customer usernames', 'on', (string) logField('customer_username_enabled'));
+    same(
+        'a line log carries no top-up scope',
+        false,
+        array_key_exists('topup_scope', logRequest(checkoutLogs()[0]))
+    );
+    same('the passed line check asks the panel once', 1, count(apiCalls('lines')));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 71, 'username' => 'Diag_Taken', 'enabled' => true),
+    );
+    same(
+        'a taken username is still refused',
+        array('The username "diag_taken" is already taken. Choose another one.'),
+        $checkout::validateProduct(5005, array(9004 => 'diag_taken'), 44)
+    );
+    same('a refused line check logs one entry', array('line_check'), logDecisions());
+    same('a refused line check logs the error count', 1, (int) logField('errors_count'));
+
+    resetApi();
+    same(
+        'a panel username field is still accepted for a line',
+        array(),
+        $checkout::validateProduct(5005, array(9008 => 'diag_panel_alias'), 44)
+    );
+    same('the panel username alias logs the alias as the matched field key', 'panel_username', (string) logField('matched_field_key'));
+
+    resetApi();
+    same('a top-up without a username field is still ignored', array(), $checkout::validateProduct(5002, array(9005 => 'mel'), 44));
+    same('a top-up without a username field logs one entry', array('topup_no_field'), logDecisions());
+    same('the top-up without a username never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$keyTypeValue = 'reseller';
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    same(
+        'a top-up on a reseller key is still left to provisioning',
+        array(),
+        $checkout::validateProduct(5002, array(9001 => 'diag_reskey'), 44)
+    );
+    same('a top-up on a reseller key logs one entry', array('topup_reseller_key'), logDecisions());
+    same('the reseller key log marks the key type', 'reseller', (string) logField('key_type'));
+    same('the reseller key log names the matched field key', 'reseller_username', (string) logField('matched_field_key'));
+    same('a reseller key still never looks a reseller up', 0, count(apiCalls('findResellerByUsername')));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    same(
+        'an unknown top-up reseller is still refused',
+        array('The reseller username "diag_ghost" was not found. Check the spelling and try again.'),
+        $checkout::validateProduct(5002, array(9001 => 'diag_ghost'), 44)
+    );
+    same('a refused top-up check logs one entry', array('topup_admin_check'), logDecisions());
+    same('a refused top-up check logs the error count', 1, (int) logField('errors_count'));
+    same('a refused top-up check logs the typed value length', strlen('diag_ghost'), (int) logField('matched_field_value_len'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = array('id' => '558', 'username' => 'Diag_Ok', 'member_group_id' => 2);
+    same('a top-up to an existing reseller still passes', array(), $checkout::validateProduct(5002, array(9001 => 'diag_ok'), 44));
+    same('a passed top-up check logs one entry', array('topup_admin_check'), logDecisions());
+    same('a passed top-up check logs no error', 0, (int) logField('errors_count'));
+    same(
+        'the top-up log lists the product fields',
+        array(
+            array('name' => 'Reseller username|Reseller account', 'key' => 'reseller_username'),
+            array('name' => 'Credits', 'key' => 'credits'),
+        ),
+        logField('field_names_on_product')
+    );
+
+    resetApi();
+    same(
+        'a linked top-up without a client session is still ignored',
+        array(),
+        $checkout::validateProduct(5003, array(9002 => 'diag_linked'), 0)
+    );
+    same('a linked top-up without a client logs one entry', array('topup_linked_no_client'), logDecisions());
+    same('the linked log marks the scope', 'linked', (string) logField('topup_scope'));
+    same('the linked log carries the unsigned client', 0, (int) logField('client_id'));
+
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 135, 'reseller_id' => '41', 'username' => 'Diag_Linked_Ok'),
+    );
+    same(
+        'a linked top-up of the client still passes',
+        array(),
+        $checkout::validateProduct(5003, array(9002 => 'diag_linked_ok'), 44)
+    );
+    same('a passed linked top-up logs one entry', array('topup_linked_check'), logDecisions());
+    same('a passed linked top-up never looks a reseller up on the panel', 0, count(apiCalls('findResellerByUsername')));
+
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$clientResellers = array(
+        array('service_id' => 135, 'reseller_id' => '41', 'username' => 'other_diag'),
+    );
+    same(
+        'a linked top-up of another reseller is still refused',
+        array('The reseller username "diag_loose" does not match any of your Sub-Reseller accounts.'),
+        $checkout::validateProduct(5003, array(9002 => 'diag_loose'), 44)
+    );
+    same('a refused linked top-up logs one entry', array('topup_linked_check'), logDecisions());
+    same('a refused linked top-up logs the error count', 1, (int) logField('errors_count'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    $checkout::validateProduct(5005, array(9004 => 'diag_memo_name'), 44);
+    $checkout::validateProduct(5005, array(9004 => 'diag_memo_name'), 44);
+    same('a repeated username still asks the panel once', 1, count(apiCalls('lines')));
+    same('a repeated username logs one entry per fire', array('line_check', 'memo_line'), logDecisions());
+    $request = logRequest(checkoutLogs()[1]);
+    same('a memo entry still names the matched field key', 'line_username', (string) ($request['matched_field_key'] ?? ''));
+    same(
+        'a memo entry still carries the typed value length',
+        strlen('diag_memo_name'),
+        (int) ($request['matched_field_value_len'] ?? -1)
+    );
+    same('a memo entry carries no error count', 0, (int) ($request['errors_count'] ?? -1));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesError = 'Panel unreachable from the cart';
+    same(
+        'a panel failure still never blocks the checkout',
+        array(),
+        $checkout::validateProduct(5005, array(9004 => 'diag_boom'), 44)
+    );
+    same('a panel failure writes exactly one entry', array('checkout_validate:Panel unreachable from the cart'), loggedActions());
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerError = 'Panel timeout in the cart';
+    same(
+        'a top-up panel failure still never blocks the checkout',
+        array(),
+        $checkout::validateProduct(5002, array(9001 => 'diag_timeout'), 44)
+    );
+    same('a top-up panel failure writes exactly one entry', array('checkout_validate:Panel timeout in the cart'), loggedActions());
+
+    resetApi();
+    $productRows = \WHMCS\Database\Capsule::$rows['tblproducts'];
+    \WHMCS\Database\Capsule::$rows['tblproducts'] = (static function () {
+        throw new \RuntimeException('Products table unavailable again');
+        yield;
+    })();
+    same('a database failure still never blocks the checkout', array(), $checkout::validateProduct(5005, array(9004 => 'diag_db'), 44));
+    same('a database failure writes exactly one entry', array('checkout_validate:Products table unavailable again'), loggedActions());
+    \WHMCS\Database\Capsule::$rows['tblproducts'] = $productRows;
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    $GLOBALS['moduleLogThrows'] = true;
+    same(
+        'a broken module log still never blocks the checkout',
+        array(),
+        $checkout::validateProduct(5005, array(9004 => 'diag_log_boom'), 44)
+    );
+    same('a broken module log writes nothing', 0, count(checkoutLogs()));
+    unset($GLOBALS['moduleLogThrows']);
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesError = 'Panel unreachable again';
+    $GLOBALS['moduleLogThrows'] = true;
+    same(
+        'a broken module log never blocks a failed panel check',
+        array(),
+        $checkout::validateProduct(5005, array(9004 => 'diag_log_boom_2'), 44)
+    );
+    same('a broken module log writes nothing for a failed check', array(), loggedActions());
+    unset($GLOBALS['moduleLogThrows']);
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 72, 'username' => 'Diag_Hook_Taken', 'enabled' => true),
+    );
+    $_SESSION = array(
+        'uid' => 44,
+        'cart' => array(
+            'products' => array(
+                array('pid' => 5005, 'customfields' => array(9004 => 'diag_hook_taken')),
+                array('pid' => 5008, 'customfields' => array(9009 => 'diag_hook_reseller')),
+            ),
+        ),
+    );
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 44));
+    same(
+        'the checkout hook still reports the line error only',
+        array('The username "diag_hook_taken" is already taken. Choose another one.'),
+        $errors
+    );
+    same('the checkout hook logs one entry per cart product', array('line_check', 'topup_no_field'), logDecisions());
+
+    resetApi();
+    $_SESSION = array('uid' => 44);
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateProductUpdate'], array(
+        'pid' => 5005,
+        'customfield' => array(9004 => 'diag_hook_free'),
+    ));
+    same('the cart update hook still returns nothing when the validator passes', array(), $errors);
+    same('one cart update writes exactly one log', array('line_check'), logDecisions());
+
+    resetApi();
+    $manyFields = array();
+    for ($index = 0; $index < 25; $index++) {
+        $manyFields[9100 + $index] = 'secret_value_' . $index;
+    }
+    same('a top-up with unrelated fields is still ignored', array(), $checkout::validateProduct(5002, $manyFields, 44));
+    same('the log keeps the field id list short', 20, count((array) logField('input_field_ids')));
+    same('the log keeps the first field ids', array(9100, 9101), array_slice((array) logField('input_field_ids'), 0, 2));
+    same('the log never writes a typed value', false, strpos((string) checkoutLogs()[0][2], 'secret_value_'));
 
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";
     exit($GLOBALS['failed'] === 0 ? 0 : 1);
