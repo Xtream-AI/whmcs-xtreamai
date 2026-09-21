@@ -2524,25 +2524,31 @@ namespace {
     );
 
     resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
     same(
-        'a top-up field named only Reseller matches no key',
-        array(),
+        'a top-up field named only Reseller falls back to the single product field',
+        array('The reseller username "ghost_reseller" was not found. Check the spelling and try again.'),
         $checkout::validateProduct(5008, array(9009 => 'ghost_reseller'), 44)
     );
-    same('the silent top-up mismatch writes exactly one log', 1, count(checkoutLogs()));
-    same('the silent top-up mismatch logs the no-field decision', array('topup_no_field'), logDecisions());
+    same('the single product field writes exactly one log', 1, count(checkoutLogs()));
+    same('the single product field logs the top-up check', array('topup_admin_check'), logDecisions());
     same(
-        'the silent top-up mismatch answers with the decision and the error count',
-        'decision=topup_no_field errors=0',
+        'the single product field answers with the decision and the error count',
+        'decision=topup_admin_check errors=1',
         logResponse(checkoutLogs()[0])
     );
-    same('the silent top-up mismatch names no matched field', '', (string) logField('matched_field_key'));
-    same('the silent top-up mismatch carries no value length', 0, (int) logField('matched_field_value_len'));
-    same('the silent top-up mismatch carries no error', 0, (int) logField('errors_count'));
+    same('the single product field names the fallback key', '*single*', (string) logField('matched_field_key'));
+    same('the single product field logs the typed value length', strlen('ghost_reseller'), (int) logField('matched_field_value_len'));
+    same('the single product field logs one error', 1, (int) logField('errors_count'));
     same(
         'the log lists the custom fields the product carries',
-        array(array('name' => 'Reseller', 'key' => 'reseller')),
+        array(array('name' => 'Reseller', 'keys' => array('reseller'))),
         logField('field_names_on_product')
+    );
+    same(
+        'the single product field is looked up on the panel',
+        array(1, 'ghost_reseller'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
     );
     same('the log carries the product id', 5008, (int) logField('product_id'));
     same('the log carries the panel id', 1, (int) logField('panel_id'));
@@ -2671,8 +2677,8 @@ namespace {
     same(
         'the top-up log lists the product fields',
         array(
-            array('name' => 'Reseller username|Reseller account', 'key' => 'reseller_username'),
-            array('name' => 'Credits', 'key' => 'credits'),
+            array('name' => 'Reseller username|Reseller account', 'keys' => array('reseller_username', 'reseller_account')),
+            array('name' => 'Credits', 'keys' => array('credits')),
         ),
         logField('field_names_on_product')
     );
@@ -2791,11 +2797,14 @@ namespace {
     );
     $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 44));
     same(
-        'the checkout hook still reports the line error only',
-        array('The username "diag_hook_taken" is already taken. Choose another one.'),
+        'the checkout hook reports the line error and the single field top-up error',
+        array(
+            'The username "diag_hook_taken" is already taken. Choose another one.',
+            'The reseller username "diag_hook_reseller" was not found. Check the spelling and try again.',
+        ),
         $errors
     );
-    same('the checkout hook logs one entry per cart product', array('line_check', 'topup_no_field'), logDecisions());
+    same('the checkout hook logs one entry per cart product', array('line_check', 'topup_admin_check'), logDecisions());
 
     resetApi();
     $_SESSION = array('uid' => 44);
@@ -3134,6 +3143,194 @@ namespace {
         'hook=checkout resolved_pid=0 validator_called=0 exception=Error: Cannot use object of type stdClass as array',
         logResponse(checkoutHookLogs()[0])
     );
+
+    section('O. Custom field name variants');
+
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5009,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'topup',
+        'configoption10' => 'any',
+        'configoption11' => 'off',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5010,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'topup',
+        'configoption10' => 'any',
+        'configoption11' => 'off',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5011,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'topup',
+        'configoption10' => 'any',
+        'configoption11' => 'off',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5012,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'line',
+        'configoption10' => 'any',
+        'configoption11' => 'on',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5013,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'line',
+        'configoption10' => 'any',
+        'configoption11' => 'on',
+    );
+    \WHMCS\Database\Capsule::$rows['tblproducts'][] = array(
+        'id' => 5014,
+        'servertype' => 'xtreamai',
+        'configoption1' => '1',
+        'configoption5' => 'line',
+        'configoption10' => 'any',
+        'configoption11' => 'off',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9010,
+        'type' => 'product',
+        'relid' => 5009,
+        'fieldname' => 'Reseller',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9011,
+        'type' => 'product',
+        'relid' => 5009,
+        'fieldname' => 'Account name',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9012,
+        'type' => 'product',
+        'relid' => 5010,
+        'fieldname' => 'topupuser|Reseller username',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9013,
+        'type' => 'product',
+        'relid' => 5011,
+        'fieldname' => 'Reseller username|Reseller username',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9014,
+        'type' => 'product',
+        'relid' => 5012,
+        'fieldname' => 'lineuser|Line username',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9015,
+        'type' => 'product',
+        'relid' => 5013,
+        'fieldname' => 'Account name',
+        'fieldtype' => 'text',
+    );
+    \WHMCS\Database\Capsule::$rows['tblcustomfields'][] = array(
+        'id' => 9016,
+        'type' => 'product',
+        'relid' => 5014,
+        'fieldname' => 'Account name',
+        'fieldtype' => 'text',
+    );
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    same(
+        'a top-up field named internal|visible matches the visible name',
+        array('The reseller username "variant_ghost" was not found. Check the spelling and try again.'),
+        $checkout::validateProduct(5010, array(9012 => '  variant_ghost  '), 44)
+    );
+    same(
+        'the internal|visible top-up field looks the reseller up on the panel',
+        array(1, 'variant_ghost'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
+    );
+    same('the internal|visible top-up field logs the visible key', 'reseller_username', (string) logField('matched_field_key'));
+    same(
+        'the log of the internal|visible field carries both keys',
+        array(array('name' => 'topupuser|Reseller username', 'keys' => array('topupuser', 'reseller_username'))),
+        logField('field_names_on_product')
+    );
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    same(
+        'a field named the same before and after the pipe matches the visible name',
+        array('The reseller username "variant_same" was not found. Check the spelling and try again.'),
+        $checkout::validateProduct(5011, array(9013 => 'variant_same'), 44)
+    );
+    same('the doubled field name reaches the panel once', 1, count(apiCalls('findResellerByUsername')));
+    same('the doubled field name logs the visible key', 'reseller_username', (string) logField('matched_field_key'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$findResellerResult = null;
+    same(
+        'a single unrelated field carries the top-up username',
+        array('The reseller username "variant_single" was not found. Check the spelling and try again.'),
+        $checkout::validateProduct(5008, array(9009 => 'variant_single'), 44)
+    );
+    same('the single field logs the fallback key', '*single*', (string) logField('matched_field_key'));
+    same(
+        'the single field reaches the panel with the typed value',
+        array(1, 'variant_single'),
+        apiCalls('findResellerByUsername') ? apiCalls('findResellerByUsername')[0]['args'] : null
+    );
+    same('the single field logs the typed value length', strlen('variant_single'), (int) logField('matched_field_value_len'));
+
+    resetApi();
+    same('a blank single field stays a missing field', array(), $checkout::validateProduct(5008, array(9009 => '   '), 44));
+    same('a blank single field logs the no-field decision', array('topup_no_field'), logDecisions());
+    same('a blank single field never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    same(
+        'two unrelated fields leave the top-up without a username',
+        array(),
+        $checkout::validateProduct(5009, array(9010 => 'variant_two', 9011 => 'variant_two'), 44)
+    );
+    same('two unrelated fields log the no-field decision', array('topup_no_field'), logDecisions());
+    same('two unrelated fields name no matched field', '', (string) logField('matched_field_key'));
+    same('two unrelated fields never touch the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    same('a line field named internal|visible matches the visible name', array(), $checkout::validateProduct(5012, array(9014 => 'variant_line'), 44));
+    same(
+        'the line internal|visible field asks the panel',
+        array(1, 'variant_line'),
+        apiCalls('lines') ? apiCalls('lines')[0]['args'] : null
+    );
+    same('the line internal|visible field logs the visible key', 'line_username', (string) logField('matched_field_key'));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array();
+    same('a line with one unrelated field falls back to it', array(), $checkout::validateProduct(5013, array(9015 => 'variant_one_line'), 44));
+    same(
+        'the line fallback asks the panel',
+        array(1, 'variant_one_line'),
+        apiCalls('lines') ? apiCalls('lines')[0]['args'] : null
+    );
+    same('the line fallback logs the fallback key', '*single*', (string) logField('matched_field_key'));
+
+    resetApi();
+    same(
+        'a disabled line keeps the single field out of the checkout',
+        array(),
+        $checkout::validateProduct(5014, array(9016 => 'variant_off_line'), 44)
+    );
+    same('a disabled line with a single field logs the disabled decision', array('line_disabled'), logDecisions());
+    same('a disabled line with a single field never touches the panel', 0, count(\WhmcsXtreamAI\PanelApi::$calls));
 
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";
     exit($GLOBALS['failed'] === 0 ? 0 : 1);

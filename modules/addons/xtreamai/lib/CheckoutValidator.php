@@ -45,7 +45,7 @@ final class CheckoutValidator
 
             if ($accountType === 'topup') {
                 $ctx['topup_scope'] = self::scope($product);
-                $outcome = self::validateTopUp($pid, $product, $panelId, $fields, $clientId, $ctx);
+                $outcome = self::validateTopUp($pid, $product, $panelId, $fields, $customFieldsById, $clientId, $ctx);
 
                 return self::report($pid, $outcome['decision'], $outcome['errors'], $outcome['ctx'], $outcome['logged']);
             }
@@ -55,7 +55,7 @@ final class CheckoutValidator
             }
 
             $ctx['customer_username_enabled'] = strtolower(trim((string) ($product->configoption11 ?? '')));
-            $outcome = self::validateLine($pid, $product, $panelId, $fields, $ctx);
+            $outcome = self::validateLine($pid, $product, $panelId, $fields, $customFieldsById, $ctx);
 
             return self::report($pid, $outcome['decision'], $outcome['errors'], $outcome['ctx'], $outcome['logged']);
         } catch (\Throwable $e) {
@@ -74,20 +74,55 @@ final class CheckoutValidator
 
         $fields = [];
         foreach ($rows as $row) {
-            $key = self::optionKey((string) ($row->fieldname ?? ''));
-            if ($key === '' || array_key_exists($key, $fields)) {
-                continue;
-            }
-
             $value = $values[(int) ($row->id ?? 0)] ?? '';
             if (is_array($value)) {
                 $value = reset($value);
             }
 
-            $fields[$key] = $value;
+            foreach (self::fieldKeys((string) ($row->fieldname ?? '')) as $key) {
+                if ($key === '' || array_key_exists($key, $fields)) {
+                    continue;
+                }
+
+                $fields[$key] = $value;
+            }
         }
 
         return $fields;
+    }
+
+    private static function fieldKeys(string $name): array
+    {
+        $pipe = strpos($name, '|');
+        if ($pipe === false) {
+            return [self::optionKey($name)];
+        }
+
+        return [self::optionKey(substr($name, 0, $pipe)), self::optionKey(substr($name, $pipe + 1))];
+    }
+
+    private static function singleField(int $pid, array $values): array
+    {
+        $rows = Capsule::table('tblcustomfields')
+            ->where('type', 'product')
+            ->where('relid', $pid)
+            ->get();
+
+        if (count($rows) !== 1) {
+            return ['key' => '', 'value' => ''];
+        }
+
+        $value = $values[(int) ($rows[0]->id ?? 0)] ?? '';
+        if (is_array($value)) {
+            $value = reset($value);
+        }
+
+        $typed = trim((string) $value);
+        if ($typed === '') {
+            return ['key' => '', 'value' => ''];
+        }
+
+        return ['key' => '*single*', 'value' => $typed];
     }
 
     private static function fieldMatch(array $fields, array $names): array
@@ -132,9 +167,20 @@ final class CheckoutValidator
         return substr($clean, 0, 40);
     }
 
-    private static function validateTopUp(int $pid, object $product, int $panelId, array $fields, int $clientId, array $ctx): array
-    {
+    private static function validateTopUp(
+        int $pid,
+        object $product,
+        int $panelId,
+        array $fields,
+        array $values,
+        int $clientId,
+        array $ctx
+    ): array {
         $match = self::fieldMatch($fields, ['reseller_username', 'panel_username', 'sub_reseller_username']);
+        if ($match['value'] === '') {
+            $match = self::singleField($pid, $values);
+        }
+
         if ($match['value'] === '') {
             return self::outcome('topup_no_field', [], $ctx);
         }
@@ -220,13 +266,17 @@ final class CheckoutValidator
         return strtolower(trim((string) ($product->configoption11 ?? ''))) === 'on';
     }
 
-    private static function validateLine(int $pid, object $product, int $panelId, array $fields, array $ctx): array
+    private static function validateLine(int $pid, object $product, int $panelId, array $fields, array $values, array $ctx): array
     {
         if (!self::lineEnabled($product)) {
             return self::outcome('line_disabled', [], $ctx);
         }
 
         $match = self::fieldMatch($fields, ['line_username', 'username', 'panel_username']);
+        if ($match['value'] === '') {
+            $match = self::singleField($pid, $values);
+        }
+
         if ($match['value'] === '') {
             return self::outcome('line_no_field', [], $ctx);
         }
@@ -323,7 +373,14 @@ final class CheckoutValidator
             $names = [];
             foreach ($rows as $row) {
                 $name = (string) ($row->fieldname ?? '');
-                $names[] = ['name' => $name, 'key' => self::optionKey($name)];
+                $keys = [];
+                foreach (self::fieldKeys($name) as $key) {
+                    if ($key !== '' && !in_array($key, $keys, true)) {
+                        $keys[] = $key;
+                    }
+                }
+
+                $names[] = ['name' => $name, 'keys' => $keys];
             }
 
             return self::shortList($names);
