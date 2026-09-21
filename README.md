@@ -87,7 +87,12 @@ account on the panel:
 - Lines browser with search and status filter.
 - Read-only Catalog view (streams and VOD).
 - Module Logs (WHMCS `tblmodulelog`) with date, action and a short
-  summary.
+  summary. From module 1.9.2 and with WHMCS module logging on, a cart
+  check leaves two `xtreamai` entries: `checkout_hook` (the call reached
+  the module, with the cart products and the field ids the order form
+  sent) and `checkout_validate` (the field the module recognised and how
+  many errors it returned). Neither stores the username the customer
+  typed, only its length.
 - Credential generators: username and password generators (auto-generate
   toggle, prefix, length, character type, live preview) and the line
   notes template with documented tags and a live example.
@@ -383,9 +388,13 @@ With the second value, add a custom field to the product
 `Line username`, type **Text Box**, with **Show on Order Form** ticked so
 the customer types it at checkout. Tick **Required** if every order has
 to carry one. `Username` and `Panel username` are accepted as field names
-too. The module validates the value on creation: 3 to 32 letters, digits,
-dashes or underscores; paste `^[A-Za-z0-9_-]{3,32}$` in the custom
-field's **Validation** box and WHMCS rejects an invalid value in the cart.
+too. A WHMCS field name may carry a visible label after a pipe
+(`Line username|Username for the panel`): from module 1.9.4 both halves
+count, and a product that carries a single custom field is checked
+whatever that field is called. The module validates the value on
+creation: 3 to 32 letters, digits, dashes or underscores; paste
+`^[A-Za-z0-9_-]{3,32}$` in the custom field's **Validation** box and
+WHMCS rejects an invalid value in the cart.
 
 From module 1.9.1 the module checks the field in the cart as well, when
 the product is added and again on the checkout page, so most mistakes are
@@ -592,8 +601,11 @@ the same panel; with a custom field named `Reseller username` (also
 the username the customer types instead and looks it up directly on the panel
 (`GET /panel-api/v1/resellers?username=…`, exact match, admin key), so an
 account an admin created by hand, which never went through WHMCS, can buy
-credits too. The top-up service stays linked to the account it credited, so
-every renewal keeps topping up that account. The custom field on every top-up
+credits too. From module 1.9.4 a field name may carry a visible label after
+a pipe, as in `Reseller username|Reseller username on the panel`, and both
+halves count; a top-up product that carries a single custom field uses it
+whatever that field is called. The top-up service stays linked to the
+account it credited, so every renewal keeps topping up that account. The custom field on every top-up
 product is the recommended setup: without it the module only gets it right when
 the client has exactly one linked Sub-Reseller service on that panel.
 

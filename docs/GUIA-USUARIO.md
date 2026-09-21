@@ -174,7 +174,7 @@ Por defecto el módulo inventa el usuario de cada línea. Si quieres que lo escr
 Después añade un **Custom Field** al producto (Products/Services → tu producto → Custom Fields):
 
 1. Pulsa **Add New Custom Field** (añadir campo).
-2. **Field Name:** `Line username` (los nombres `Username` y `Panel username` también sirven).
+2. **Field Name:** `Line username` (los nombres `Username` y `Panel username` también sirven; un nombre de campo de WHMCS puede llevar además una etiqueta visible detrás de una barra vertical, como `Line username|Username for the panel`, y desde el módulo 1.9.4 cuentan las dos partes).
 3. **Field Type:** `Text Box`.
 4. Marca **Show on Order Form** para que el cliente lo vea al hacer el pedido. Marca **Required** si no quieres pedidos sin usuario.
 5. En **Validation** pega `^[A-Za-z0-9_-]{3,32}$`, para que WHMCS rechace un usuario no válido en el carrito antes de crear el pedido, sin consultar el panel.
@@ -182,7 +182,7 @@ Después añade un **Custom Field** al producto (Products/Services → tu produc
 
 A partir de ahí:
 
-- Desde el módulo 1.9.1, cuando el cliente añade el producto al carrito y otra vez en la página de confirmación del pedido, el módulo comprueba el usuario del campo antes de cualquier pago: si ya lo usa otra línea del panel, el carrito responde `The username "X" is already taken. Choose another one.`, y si el valor no cumple el formato y tu custom field no tiene regla en **Validation**, responde `The username "X" is not valid: use 3 to 32 letters, digits, dashes or underscores.` El carrito solo comprueba cuando el campo tiene valor; si el panel no responde en ese momento, el pedido no se bloquea y el usuario se comprueba otra vez al crear el servicio.
+- Desde el módulo 1.9.1, cuando el cliente añade el producto al carrito y otra vez en la página de confirmación del pedido, el módulo comprueba el usuario del campo antes de cualquier pago: si ya lo usa otra línea del panel, el carrito responde `The username "X" is already taken. Choose another one.`, y si el valor no cumple el formato y tu custom field no tiene regla en **Validation**, responde `The username "X" is not valid: use 3 to 32 letters, digits, dashes or underscores.` El carrito solo comprueba cuando el campo tiene valor; si el panel no responde en ese momento, el pedido no se bloquea y el usuario se comprueba otra vez al crear el servicio. Desde el módulo 1.9.4 el carrito encuentra el campo en cualquiera de las dos partes de un nombre como `Line username|Username for the panel`, y un producto cuyo único custom field sea ese se comprueba se llame como se llame.
 - Cuando WHMCS crea el servicio, el módulo toma el usuario que escribió el cliente, comprueba que es válido (de 3 a 32 letras, dígitos, guiones o guiones bajos) y comprueba en el panel que no lo tenga nadie más.
 - Si está libre, la línea se crea con ese usuario y la contraseña se genera con tus ajustes de credenciales, igual que siempre.
 - Si está tomado, el pedido queda pendiente con `The username "X" is already taken on this panel. Ask the customer to choose another one.` No se crea nada, y el módulo **nunca** le asigna al cliente la línea que ya existe: un usuario escrito por un cliente solo puede crear una línea nueva, así nadie puede quedarse con la línea de otro.
@@ -409,7 +409,7 @@ Un producto **Credit top-up** no crea nada nuevo: cuando se paga, **suma crédit
 1. Crea un producto como cualquier otro y abre su pestaña **Module Settings**.
 2. Pon **Account Type** en `Credit top-up (existing Sub-Reseller)`.
 3. En **Credits**, escribe cuántos créditos suma cada pedido. Si quieres vender varios tamaños (100, 500, 1000) con un solo producto, añade en su lugar una **Opción Configurable** de WHMCS llamada `credits` (una cantidad, o un desplegable con los tres tamaños): el valor que elige el cliente es lo que se suma, y sustituye al campo **Credits**.
-4. Añade al producto un **Custom Field** llamado `Reseller username`, marcado **Required** y **Show on Order Form**: el cliente escribe la cuenta del panel que quiere recargar y el módulo la acredita aunque la cuenta se haya creado a mano en el panel y nunca haya pasado por WHMCS. Este paso se recomienda en todos los productos de recarga: sin el campo, el módulo solo encuentra la cuenta cuando el cliente tiene exactamente un servicio Sub-Reseller vinculado en ese panel.
+4. Añade al producto un **Custom Field** llamado `Reseller username`, marcado **Required** y **Show on Order Form**: el cliente escribe la cuenta del panel que quiere recargar y el módulo la acredita aunque la cuenta se haya creado a mano en el panel y nunca haya pasado por WHMCS (los nombres `Panel username` y `Sub-Reseller username` también valen; desde el módulo 1.9.4 un nombre con el formato `Reseller username|Reseller username on the panel` cuenta por sus dos partes, y un producto de recarga con un solo custom field usa ese, se llame como se llame). Este paso se recomienda en todos los productos de recarga: sin el campo, el módulo solo encuentra la cuenta cuando el cliente tiene exactamente un servicio Sub-Reseller vinculado en ese panel.
 5. Guarda el producto.
 
 El **ciclo de facturación** decide cada cuánto se suman los créditos: **One Time** es una compra única, y un ciclo mensual suma la misma cantidad todos los meses de forma automática.
@@ -440,7 +440,7 @@ Dentro de **Addons → Xtream AI Panel** tienes estas pestañas:
 
 **Bulk tools** — las cuatro operaciones que trabajan sobre muchos servicios a la vez: **Index panel lines**, **Link existing services**, **Sync all services** y **Align panel expiry to WHMCS**. Mira la sección 9.
 
-**Module Logs** — un historial de lo que ha hecho el módulo (cada llamada a la API del panel), con fecha, acción y un resumen breve.
+**Module Logs** — un historial de lo que ha hecho el módulo (cada llamada a la API del panel), con fecha, acción y un resumen breve. Desde el módulo 1.9.2 y con el registro de módulos activado en WHMCS, una comprobación del carrito deja dos entradas de `xtreamai`: `checkout_hook` (la llamada llegó al módulo, con los productos del carrito y los ids de los campos que envió el formulario de pedido) y `checkout_validate` (el campo que el módulo reconoció y cuántos errores devolvió); ninguna guarda el usuario que escribió el cliente, solo su longitud.
 
 **General Settings** — aquí configuras cómo se crean los usuarios y contraseñas:
 

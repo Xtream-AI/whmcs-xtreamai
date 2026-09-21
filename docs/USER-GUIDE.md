@@ -172,7 +172,7 @@ By default the module invents the username of every line. If you want the custom
 Then add a **Custom Field** to the product (Products/Services → your product → Custom Fields):
 
 1. Click **Add New Custom Field**.
-2. **Field Name:** `Line username` (the names `Username` and `Panel username` work too).
+2. **Field Name:** `Line username` (the names `Username` and `Panel username` work too; a WHMCS field name may also carry a visible label after a pipe, as in `Line username|Username for the panel`, and from module 1.9.4 both halves count).
 3. **Field Type:** `Text Box`.
 4. Tick **Show on Order Form** so the customer sees it at checkout. Tick **Required** if you do not want orders without a username.
 5. In **Validation** paste `^[A-Za-z0-9_-]{3,32}$`, so WHMCS rejects an invalid username in the cart before the order is placed, without asking the panel.
@@ -180,7 +180,7 @@ Then add a **Custom Field** to the product (Products/Services → your product �
 
 What happens then:
 
-- From module 1.9.1, when the customer adds the product to the cart and again on the checkout page, the module checks the username in the field before any payment: if another line on the panel already uses it, the cart answers `The username "X" is already taken. Choose another one.`, and if the value does not fit the format and your custom field has no **Validation** rule, it answers `The username "X" is not valid: use 3 to 32 letters, digits, dashes or underscores.` The cart checks only when the field has a value; if the panel cannot be reached at that moment the order is not blocked and the username is checked again when the service is created.
+- From module 1.9.1, when the customer adds the product to the cart and again on the checkout page, the module checks the username in the field before any payment: if another line on the panel already uses it, the cart answers `The username "X" is already taken. Choose another one.`, and if the value does not fit the format and your custom field has no **Validation** rule, it answers `The username "X" is not valid: use 3 to 32 letters, digits, dashes or underscores.` The cart checks only when the field has a value; if the panel cannot be reached at that moment the order is not blocked and the username is checked again when the service is created. From module 1.9.4 the cart finds the field in either half of a name like `Line username|Username for the panel`, and a product whose only custom field is this one is checked whatever that field is called.
 - When WHMCS creates the service, the module takes the username the customer typed, checks that it is valid (3 to 32 letters, digits, dashes or underscores) and checks on the panel that nobody else is using it.
 - If it is free, the line is created with that username and the password is generated with your credential settings, exactly as usual.
 - If it is taken, the order stays pending with `The username "X" is already taken on this panel. Ask the customer to choose another one.` Nothing is created, and the module **never** attaches the existing line to your customer: a username typed by a customer can only create a new line, so nobody can take over somebody else's line.
@@ -407,7 +407,7 @@ A **Credit top-up** product creates nothing new: when it is paid, it **adds cred
 1. Create a product as usual and open its **Module Settings** tab.
 2. Set **Account Type** to `Credit top-up (existing Sub-Reseller)`.
 3. In **Credits**, type how many credits each order adds. If you want to sell several package sizes (100, 500, 1000) from one product, add a WHMCS **Configurable Option** named `credits` instead (a quantity, or a dropdown with the three sizes): what the customer picks is what gets added, and it replaces the **Credits** field.
-4. Add a **Custom Field** to the product named `Reseller username`, ticked **Required** and **Show on Order Form**: the customer types the panel account to top up, and the module credits it even if that account was created by hand in the panel and never went through WHMCS. This step is recommended on every top-up product: without the field the module only finds the account when the customer has exactly one Sub-Reseller service linked on that panel.
+4. Add a **Custom Field** to the product named `Reseller username`, ticked **Required** and **Show on Order Form**: the customer types the panel account to top up, and the module credits it even if that account was created by hand in the panel and never went through WHMCS (`Panel username` and `Sub-Reseller username` are accepted names too; from module 1.9.4 a name in the form `Reseller username|Reseller username on the panel` counts in either half, and a top-up product with a single custom field uses it whatever its name). This step is recommended on every top-up product: without the field the module only finds the account when the customer has exactly one Sub-Reseller service linked on that panel.
 5. Save the product.
 
 The **billing cycle** decides how often the credits are added: **One Time** means a single purchase, and a monthly cycle adds the same amount every month automatically.
@@ -438,7 +438,7 @@ Inside **Addons → Xtream AI Panel** you have these tabs:
 
 **Bulk tools** — the four operations that work on many services at once: **Index panel lines**, **Link existing services**, **Sync all services** and **Align panel expiry to WHMCS**. See section 9.
 
-**Module Logs** — a history of what the module has done (each call to the panel API), with date, action and a short summary.
+**Module Logs** — a history of what the module has done (each call to the panel API), with date, action and a short summary. From module 1.9.2 and with module logging enabled in WHMCS, a cart check leaves two `xtreamai` entries: `checkout_hook` (the call reached the module, with the products in the cart and the field ids the order form sent) and `checkout_validate` (the field the module recognised and how many errors it returned); neither stores the username the customer typed, only its length.
 
 **General Settings** — here you configure how usernames and passwords are created:
 
