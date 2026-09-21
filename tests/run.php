@@ -693,6 +693,7 @@ namespace {
     {
         return baseParams(array_merge(array(
             'configoption5' => 'reseller',
+            'configoption8' => '20',
             'clientsdetails' => array('email' => 'cliente@example.com'),
         ), $overrides));
     }
@@ -1201,22 +1202,22 @@ namespace {
         \WhmcsXtreamAI\ServiceStore::$rows[135]['last_action_at'],
         \WhmcsXtreamAI\ServiceStore::$rows[135]['panel_checked_at']
     );
-    \WHMCS\Database\Capsule::$rows['tblhosting'][0]['nextduedate'] = '2026-10-01';
+    \WHMCS\Database\Capsule::$rows['tblhosting'][0]['nextduedate'] = '2027-10-01';
     \WhmcsXtreamAI\PanelApi::$getLineResult = array(
         'id' => '987654',
         'username' => 'line_user',
         'enabled' => true,
         'admin_enabled' => true,
-        'exp_date' => 1790000000,
-        'expires_at' => '2026-10-01',
+        'exp_date' => 1822521600,
+        'expires_at' => '2027-10-01',
     );
 
     $fields = xtreamai_AdminServicesTabFields(baseParams());
     same('the tab names the panel line id', '987654', isset($fields['Panel line ID']) ? $fields['Panel line ID'] : null);
     same('the tab names the panel username', 'line_user', isset($fields['Panel username']) ? $fields['Panel username'] : null);
     same('the tab shows the panel status', 'Active', isset($fields['Line status']) ? $fields['Line status'] : null);
-    same('the tab shows the WHMCS next due date', '01/10/2026', isset($fields['WHMCS next due date']) ? $fields['WHMCS next due date'] : null);
-    same('the tab shows the panel expiry', '01/10/2026', isset($fields['Panel expiry']) ? $fields['Panel expiry'] : null);
+    same('the tab shows the WHMCS next due date', '01/10/2027', isset($fields['WHMCS next due date']) ? $fields['WHMCS next due date'] : null);
+    same('the tab shows the panel expiry', '01/10/2027', isset($fields['Panel expiry']) ? $fields['Panel expiry'] : null);
     same('the tab reports no module action yet', 'None yet', isset($fields['Last module action']) ? $fields['Last module action'] : null);
     same('the first tab render reads the panel once', 1, count(apiCalls('getLine')));
     ok('the first tab render is marked live', substr((string) $fields['Panel checked'], -4) === 'live', (string) $fields['Panel checked']);
@@ -1246,7 +1247,7 @@ namespace {
     $fields = xtreamai_AdminServicesTabFields(baseParams());
     ok(
         'the tab warns about the date divergence',
-        strpos((string) $fields['Warning'], 'WHMCS next due date is 01/10/2026, the panel line expires 01/09/2027') !== false,
+        strpos((string) $fields['Warning'], 'WHMCS next due date is 01/10/2027, the panel line expires 01/09/2027') !== false,
         (string) $fields['Warning']
     );
     ok(
@@ -4370,6 +4371,117 @@ namespace {
     $errors = call_user_func($GLOBALS['hooks']['ShoppingCartValidateCheckout'], array('clientId' => 44));
     same('the checkout hook reports the invalid password of the reseller line', array($passwordMessage), $errors);
     same('the checkout hook never writes a password', false, strpos(json_encode($GLOBALS['moduleLog']), 'Customer9Ok'));
+
+    section('R. Sub-Reseller Member Group ID');
+
+    $memberGroupMessage = 'Set the Sub-Reseller Member Group ID in this product\'s Module Settings: with an Admin panel key the panel needs the numeric id of the member group the new account belongs to.';
+
+    $options = xtreamai_ConfigOptions();
+    same(
+        'the Sub-Reseller Member Group ID keeps its name',
+        'Sub-Reseller Member Group ID',
+        $options['sub_reseller_member_group_id']['FriendlyName']
+    );
+    same(
+        'the Sub-Reseller Member Group ID explains the requirement',
+        'Numeric id of the panel member group this Sub-Reseller product creates accounts in (Member Groups page of the panel). Required when the panel Key type is Admin: without it the order fails with a clear message. Reseller keys ignore it and inherit the group from their sub-reseller setup.',
+        $options['sub_reseller_member_group_id']['Description']
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption8' => '',
+        'configoption11' => 'on',
+        'customfields' => array('Reseller username' => 'cliente_mg1'),
+    )));
+    same('an admin key with an empty member group fails with the exact message', $memberGroupMessage, $result);
+    same('an admin key with an empty member group never creates the account', 0, count(apiCalls('createReseller')));
+    same(
+        'an admin key with an empty member group never searches the panel',
+        0,
+        count(apiCalls('findResellerByUsername'))
+    );
+    same('an admin key with an empty member group links nothing', array(), \WhmcsXtreamAI\ServiceStore::$links);
+    same('an admin key with an empty member group logs the create call', array('create'), logActions());
+    same(
+        'the failed provisioning keeps the service status untouched',
+        array(),
+        \WhmcsXtreamAI\ServiceStore::$statuses
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption8' => '0',
+        'configoption11' => 'on',
+        'customfields' => array('Reseller username' => 'cliente_mg2'),
+    )));
+    same('an admin key with a zero member group fails with the exact message', $memberGroupMessage, $result);
+    same('an admin key with a zero member group never creates the account', 0, count(apiCalls('createReseller')));
+
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption8' => '0',
+        'configoption11' => 'on',
+        'customfields' => array('Reseller username' => 'no good!'),
+    )));
+    same('the member group check runs before the username check', $memberGroupMessage, $result);
+    same(
+        'a missing member group never looks the username up on the panel',
+        0,
+        count(apiCalls('findResellerByUsername'))
+    );
+
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption8' => '0',
+        'configoption12' => 'on',
+        'customfields' => array('Panel password' => 'Bad pass9'),
+    )));
+    same('the member group check runs before the password check', $memberGroupMessage, $result);
+
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption8' => 'group',
+    )));
+    same('a member group that is not a number fails with the exact message', $memberGroupMessage, $result);
+    same('a member group that is not a number never creates the account', 0, count(apiCalls('createReseller')));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array('configoption8' => '20')));
+    same('an admin key with a member group provisions the account', 'success', $result);
+    same(
+        'the member group reaches the panel',
+        20,
+        apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][6] : null
+    );
+    same('an admin key with a member group creates the account once', 1, count(apiCalls('createReseller')));
+    same('the panel key type is read once per creation', 1, count(apiCalls('keyType')));
+
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$keyTypeValue = 'reseller';
+    $result = xtreamai_CreateAccount(resellerParams(array(
+        'configoption8' => 'group',
+        'configoption11' => 'on',
+        'customfields' => array('Reseller username' => 'cliente_mg3'),
+    )));
+    same('a reseller key ignores a missing member group', 'success', $result);
+    same('a reseller key creates the account once', 1, count(apiCalls('createReseller')));
+    same(
+        'a reseller key sends no member group to the panel',
+        null,
+        apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][6] : null
+    );
+    same(
+        'a reseller key still sends the typed username',
+        'cliente_mg3',
+        apiCalls('createReseller') ? apiCalls('createReseller')[0]['args'][1] : null
+    );
 
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";
     exit($GLOBALS['failed'] === 0 ? 0 : 1);

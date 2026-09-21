@@ -170,7 +170,7 @@ function xtreamai_ConfigOptions()
             'Type' => 'text',
             'Size' => '5',
             'Default' => '0',
-            'Description' => 'Numeric id of the panel member group this Sub-Reseller product creates accounts in. Only used when the panel Key type is Admin (reseller keys inherit the group from their sub-reseller setup).',
+            'Description' => 'Numeric id of the panel member group this Sub-Reseller product creates accounts in (Member Groups page of the panel). Required when the panel Key type is Admin: without it the order fails with a clear message. Reseller keys ignore it and inherit the group from their sub-reseller setup.',
         ],
         'suspend_action' => [
             'FriendlyName' => 'Suspend action',
@@ -1481,6 +1481,14 @@ function xtreamai_createResellerAccount(array $params): string
 
     $credits = xtreamai_resellerCredits($params);
 
+    $keyType = \WhmcsXtreamAI\PanelApi::keyType($panelId);
+    $memberGroupId = xtreamai_subResellerMemberGroupId($params);
+    if ($keyType === 'admin' && $memberGroupId < 1) {
+        throw new \RuntimeException(
+            'Set the Sub-Reseller Member Group ID in this product\'s Module Settings: with an Admin panel key the panel needs the numeric id of the member group the new account belongs to.'
+        );
+    }
+
     $requested = xtreamai_customerUsernameEnabled($params) ? xtreamai_resellerUsernameField($params) : '';
     if ($requested !== '') {
         if (preg_match('/^[A-Za-z0-9_-]{3,32}$/', $requested) !== 1) {
@@ -1489,7 +1497,7 @@ function xtreamai_createResellerAccount(array $params): string
                 'The username "' . $shown . '" is not valid: use 3 to 32 letters, digits, dashes or underscores.'
             );
         }
-        if (\WhmcsXtreamAI\PanelApi::keyType($panelId) === 'admin'
+        if ($keyType === 'admin'
             && \WhmcsXtreamAI\PanelApi::findResellerByUsername($panelId, $requested) !== null) {
             throw new \RuntimeException(
                 'The reseller username "' . $requested . '" is already taken on this panel. Ask the customer to choose another one.'
@@ -1509,7 +1517,6 @@ function xtreamai_createResellerAccount(array $params): string
 
     $password = $requestedPassword !== '' ? $requestedPassword : xtreamai_linePassword($params);
 
-    $memberGroupId = xtreamai_subResellerMemberGroupId($params);
     $reseller = \WhmcsXtreamAI\PanelApi::createReseller(
         $panelId,
         $username,

@@ -318,7 +318,9 @@ admin reloads the page (there is no automatic reload).
    the `Panel password` custom field, see "Customer-chosen passwords"
    below), Sub-Reseller Member Group
    ID (required for Sub-Reseller products on Admin keys; numeric id of
-   the panel member group new Sub-Reseller accounts will belong to),
+   the panel member group new Sub-Reseller accounts will belong to,
+   read from the **Member Groups** page of the panel: without it the
+   order fails with a clear message and nothing is created),
    Suspend action (see "Suspending without touching the panel" below)
    and Top-up scope (Credit top-up products only: whether the
    `Reseller username` field accepts any reseller on the panel, the
@@ -624,6 +626,14 @@ Set the mode per product with the **Account Type** config option:
   status field; the module surfaces a clear error for those actions and
   preserves the WHMCS to panel link so the operator can complete them
   in the panel without losing state.
+  - With an **Admin** key the product must carry the **Sub-Reseller
+    Member Group ID** of the panel's **Member Groups** page. Without it
+    Create stops with `Set the Sub-Reseller Member Group ID in this
+    product's Module Settings: with an Admin panel key the panel needs
+    the numeric id of the member group the new account belongs to.` and
+    creates nothing, so the order stays pending until an admin fills the
+    option in and presses Create again. A **Reseller** key ignores it:
+    the group comes from the sub-reseller setup on the panel.
 
 **Product upgrades and downgrades.** When you change a service to a
 different WHMCS product, or a customer changes a configurable option
