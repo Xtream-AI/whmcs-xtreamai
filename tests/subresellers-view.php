@@ -116,11 +116,12 @@ namespace {
     $html = renderResellers('reseller', onePage());
     ok('lists both sub-resellers', strpos($html, 'subone') !== false && strpos($html, 'subtwo') !== false);
     ok('shows credits', strpos($html, '5.00') !== false);
-    ok('hides the Actions column', strpos($html, '<th>Actions</th>') === false);
-    same('no credit form', 0, substr_count($html, 'adjust_credits'));
-    ok('explains that adjusting needs an Admin key', strpos($html, 'Adjusting credits needs an Admin key.') !== false);
+    ok('shows a Transfer column instead of Actions', strpos($html, '<th>Transfer</th>') !== false && strpos($html, '<th>Actions</th>') === false);
+    same('one transfer form per row', 2, substr_count($html, 'value="adjust_credits"'));
+    same('each form blocks a second submit', 2, substr_count($html, 'this.dataset.sent = \'1\''));
+    ok('explains that credits come out of the reseller balance', strpos($html, 'Credits you add come out of your own balance') !== false);
     same('every row is closed', substr_count($html, '<tr>'), substr_count($html, '</tr>'));
-    same('same number of header and body cells', 5, substr_count(explode('<tbody>', $html)[1] ?? '', '<td>') / 2);
+    same('six cells per row, like the header', 6, substr_count(explode('<tbody>', $html)[1] ?? '', '<td>') / 2);
 
     section('Reseller key without the permission');
     $html = renderResellers('reseller', new \WhmcsXtreamAI\PanelApiRequestException('This API key lacks the required scope: subresellers:read.', 403));
@@ -141,11 +142,23 @@ namespace {
     } catch (\RuntimeException $e) {
         $error = $e->getMessage();
     }
-    same('a reseller key is refused before calling the panel', 'Adjusting sub-reseller credits needs an Admin key on this panel entry.', $error);
-    $adjusted = array_filter(\WhmcsXtreamAI\PanelApi::$calls, function ($c) {
+    same('a reseller key sends the transfer to the panel', '', $error);
+    $adjusted = array_values(array_filter(\WhmcsXtreamAI\PanelApi::$calls, function ($c) {
         return $c[0] === 'adjustResellerCredits';
-    });
-    same('nothing is sent to the panel', 0, count($adjusted));
+    }));
+    same('one call with the typed amount', array(array('adjustResellerCredits', 3, '41', 5.0)), $adjusted);
+
+    section('Transfer permission missing');
+    same(
+        'explains how to get the permission',
+        'This panel key is not allowed to transfer credits. On the panel, create a new API key with the "Transfer credits to sub-resellers" permission and paste it on this panel entry.',
+        xtreamai_credits_error_message(new \WhmcsXtreamAI\PanelApiRequestException('This API key lacks the required scope: subresellers:credits.', 403))
+    );
+    same(
+        'other panel messages pass through',
+        'Not enough credits to transfer',
+        xtreamai_credits_error_message(new \WhmcsXtreamAI\PanelApiRequestException('Not enough credits to transfer', 402))
+    );
 
     \WhmcsXtreamAI\PanelApi::$keyTypeValue = 'admin';
     \WhmcsXtreamAI\PanelApi::$calls = array();

@@ -1669,6 +1669,9 @@ function xtreamai_Renew(array $params)
         if (xtreamai_accountType($params) === 'reseller') {
             $credits = xtreamai_resellerCredits($params);
             if ($credits > 0) {
+                if (\WhmcsXtreamAI\PanelApi::keyType($panelId) !== 'admin') {
+                    throw new \RuntimeException('Sub-Reseller renewals that add credits require an admin panel key on this panel entry.');
+                }
                 \WhmcsXtreamAI\PanelApi::adjustResellerCredits(
                     $panelId,
                     $lineId,

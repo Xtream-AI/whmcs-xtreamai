@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.12.0',
+        'version'     => '1.13.0',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -180,8 +180,14 @@ function xtreamai_handle_action($action, $modulelink)
 
             case 'adjust_credits':
                 $redirect .= '&view=resellers&panel_id=' . (int) ($_POST['panel_id'] ?? 0);
-                $balance = xtreamai_adjust_credits();
-                xtreamai_flash('success', $balance === '' ? 'Credits adjusted.' : 'Credits adjusted. New balance: ' . $balance);
+                $adjustAdminKey = \WhmcsXtreamAI\PanelApi::keyType((int) ($_POST['panel_id'] ?? 0)) === 'admin';
+                try {
+                    $balance = xtreamai_adjust_credits();
+                } catch (\Throwable $e) {
+                    throw new \RuntimeException(xtreamai_credits_error_message($e));
+                }
+                $done = $adjustAdminKey ? 'Credits adjusted.' : 'Credits transferred.';
+                xtreamai_flash('success', $balance === '' ? $done : $done . ' Sub-reseller balance: ' . $balance);
                 break;
 
             case 'check_update':
@@ -347,9 +353,6 @@ function xtreamai_adjust_credits(): string
     }
     if ($resellerId < 1) {
         throw new \RuntimeException('Reseller not found.');
-    }
-    if (\WhmcsXtreamAI\PanelApi::keyType($panelId) !== 'admin') {
-        throw new \RuntimeException('Adjusting sub-reseller credits needs an Admin key on this panel entry.');
     }
 
     $deltaRaw = (string) ($_POST['delta'] ?? '');
@@ -1901,7 +1904,7 @@ JS;
         $resellersAdminKey = $selectedPanelId > 0 && \WhmcsXtreamAI\PanelApi::keyType($selectedPanelId) === 'admin';
         $resellersSubtitle = $resellersAdminKey
             ? 'Sub-resellers and their credit balances on the selected panel.'
-            : 'Your sub-resellers (and theirs) with their credit balances. Adjusting credits needs an Admin key.';
+            : 'Your sub-resellers (and theirs) with their credit balances. Credits you add come out of your own balance; a negative amount takes them back from a direct sub-reseller.';
 
         echo '<div class="xtai-card">'
             . '<div class="xtai-card-head">'
@@ -1942,7 +1945,7 @@ JS;
             } else {
                 echo '<div class="xtai-table-wrap"><table class="xtai-table">'
                     . '<thead><tr><th>Username</th><th>Email</th><th>Group</th><th>Status</th><th>Credits</th>'
-                    . ($resellersAdminKey ? '<th>Actions</th>' : '')
+                    . '<th>' . ($resellersAdminKey ? 'Actions' : 'Transfer') . '</th>'
                     . '</tr></thead>'
                     . '<tbody>';
                 foreach ($resellers as $row) {
@@ -1969,11 +1972,7 @@ JS;
                         . '<td>' . $groupHtml . '</td>'
                         . '<td>' . $statusHtml . '</td>'
                         . '<td>' . $creditsHtml . '</td>';
-                    if (!$resellersAdminKey) {
-                        echo '</tr>';
-                        continue;
-                    }
-                    echo '<td><form method="post" action="' . $linkList . '" class="xtai-inline-form xtai-actions-inline">'
+                    echo '<td><form method="post" action="' . $linkList . '" class="xtai-inline-form xtai-actions-inline" onsubmit="if (this.dataset.sent) { return false; } this.dataset.sent = \'1\'; this.querySelector(\'button\').disabled = true; return true;">'
                         . $token
                         . '<input type="hidden" name="action" value="adjust_credits">'
                         . '<input type="hidden" name="panel_id" value="' . $selectedPanelId . '">'
@@ -3110,6 +3109,16 @@ if(f){f.style.transition="opacity .18s ease";f.style.opacity="0";setTimeout(func
 })();
 </script>
 </div>';
+}
+
+function xtreamai_credits_error_message(\Throwable $e)
+{
+    $msg = xtreamai_safe_message($e);
+    if (strpos($msg, 'subresellers:credits') !== false) {
+        return 'This panel key is not allowed to transfer credits. On the panel, create a new API key with the "Transfer credits to sub-resellers" permission and paste it on this panel entry.';
+    }
+
+    return $msg;
 }
 
 function xtreamai_resellers_load_message(\Throwable $e)

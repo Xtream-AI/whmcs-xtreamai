@@ -828,6 +828,18 @@ namespace {
 
     linkService();
     resetApi();
+    \WhmcsXtreamAI\PanelApi::$keyTypeValue = 'reseller';
+    $result = xtreamai_Renew(baseParams(array('configoption5' => 'reseller', 'configoption6' => '10')));
+    ok(
+        'a sub-reseller renewal on a reseller key is refused',
+        strpos((string) $result, 'Sub-Reseller renewals that add credits require an admin panel key') !== false,
+        (string) $result
+    );
+    same('a sub-reseller renewal on a reseller key moves no credits', 0, count(apiCalls('adjustResellerCredits')));
+    \WhmcsXtreamAI\PanelApi::$keyTypeValue = 'admin';
+
+    linkService();
+    resetApi();
     $result = xtreamai_Renew(baseParams(array('configoption7' => '5')));
     $statuses = \WhmcsXtreamAI\ServiceStore::$statuses;
     same('renew marks the service active with the panel expiry', '2027-02-01 00:00:00', $statuses[0]['expires_at']);

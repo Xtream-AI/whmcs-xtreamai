@@ -98,7 +98,9 @@ account on the panel:
 - Sub-Resellers view: list sub-resellers and their credits. With an admin
   key it shows every reseller of the panel and lets you adjust credits;
   with a reseller key holding `subresellers:read` it shows that
-  reseller's own sub-resellers, read only (module 1.12.0 and later).
+  reseller's own sub-resellers (module 1.12.0 and later), and with
+  `subresellers:credits` it transfers credits from the reseller's own
+  balance to them (module 1.13.0 and later).
 - Lines browser with search and status filter.
 - Read-only Catalog view (streams and VOD).
 - Module Logs (WHMCS `tblmodulelog`) with date, action and a short
@@ -204,7 +206,8 @@ which parts of the module light up:
 | Catalog (packages, bouquets, streams, VOD), `me` | Yes | Yes |
 | Create sub-reseller | Yes | Yes |
 | Sub-Reseller product lifecycle (reset password/credits) | No (403) | Yes |
-| Addon "Sub-Resellers" view and dashboard reseller counters | Own sub-resellers only, read only, with `subresellers:read` (module 1.12.0, panel updated 2026-09-25 or later) | Yes, whole panel, with credit adjustment |
+| Addon "Sub-Resellers" view and dashboard reseller counters | Own sub-resellers only, with `subresellers:read` (module 1.12.0, panel updated 2026-09-25 or later) | Yes, whole panel |
+| Credits from the Sub-Resellers view | Transfer from the reseller's own balance, with `subresellers:credits` (module 1.13.0) | Adjustment (adds or removes credits) |
 
 Recommended scopes when creating the key on the panel:
 
@@ -216,8 +219,10 @@ Recommended scopes when creating the key on the panel:
 - **Seeing your own sub-resellers with a Reseller key:** add
   `subresellers:read` ("See sub-resellers" on the panel). It only works if
   the panel administrator enabled sub-resellers for the reseller's group.
-  Keys cannot be edited: create a new key with it and paste the new token
-  on the panel entry.
+  Add `subresellers:credits` ("Transfer credits to sub-resellers") to
+  move credits from the reseller's balance to them. Keys cannot be
+  edited: create a new key with the scopes and paste the new token on
+  the panel entry.
 
 `/me` is accessible to any authenticated key (it is used by the
 Test Connection button and needs no scope).

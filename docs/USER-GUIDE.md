@@ -414,7 +414,9 @@ You don't need to choose Package or Bouquets for this type: the module ignores t
 2. Enter an optional **Reason**.
 3. Click **Apply**.
 
-Adjusting credits needs an **Admin** key on the panel entry. With a **Reseller** key (module 1.12.0 and later) the screen shows that reseller's own sub-resellers, and theirs, read only, with no **Apply** column. For that the key needs the **See sub-resellers** permission (`subresellers:read`) and the panel administrator must have enabled sub-resellers for the reseller's group. A key without the permission shows `Could not load sub-resellers: this panel key is not allowed to list sub-resellers.`: keys cannot be edited, so create a new key on the panel with **See sub-resellers** ticked and paste the new token on the panel entry.
+With an **Admin** key the amount is an adjustment: it adds or removes credits on that account without touching anyone else. With a **Reseller** key (module 1.12.0 and later) the screen shows that reseller's own sub-resellers, and theirs, and the **Transfer** column (module 1.13.0 and later) moves credits: a positive amount comes out of the reseller's own balance, and a negative amount takes credits back from a direct sub-reseller into the reseller's balance (only if the panel allows it). The reseller can never add credits to its own account.
+
+A Reseller key needs the **See sub-resellers** permission (`subresellers:read`) to list, and **Transfer credits to sub-resellers** (`subresellers:credits`) to transfer; the panel administrator must also have enabled sub-resellers for the reseller's group. Keys cannot be edited: create a new key on the panel with those permissions ticked and paste the new token on the panel entry. The messages `this panel key is not allowed to list sub-resellers` and `This panel key is not allowed to transfer credits` mean the key lacks one of them.
 
 ### Selling credit top-ups
 
@@ -446,7 +448,7 @@ Inside **Addons → Xtream AI Panel** you have these tabs:
 
 **Panels** — the list of your panels with their status, SSL, last check, and actions (Test, Edit, Activate/Deactivate, Delete). The **Add Panel** / **Edit Panel** form is also here.
 
-**Sub-Resellers** — the list of sub-resellers and their credits, with the credit adjustment form (Admin key). With a Reseller key it lists only that reseller's own sub-resellers, read only (see section 10).
+**Sub-Resellers** — the list of sub-resellers and their credits, with the credit adjustment form (Admin key). With a Reseller key it lists only that reseller's own sub-resellers, and transfers credits from the reseller's own balance (see section 10).
 
 **Lines** — to search for lines. You can filter by **username** (the "Username contains…" field) and by **status** (All statuses / Enabled / Disabled). The **Status** column of each row shows the same four values as the service tab: `Active`, `Expired`, `Disabled` and `Blocked by panel`.
 
