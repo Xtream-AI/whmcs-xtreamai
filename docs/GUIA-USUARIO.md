@@ -416,6 +416,8 @@ No hace falta elegir Package ni Bouquets para este tipo: el módulo los ignora y
 2. Escribe un **Reason** (motivo) opcional.
 3. Pulsa **Apply** (Aplicar).
 
+Ajustar créditos requiere una llave **Admin** en el panel configurado. Con una llave **Reseller** (módulo 1.12.0 o posterior) la pantalla muestra los sub-resellers propios de ese reseller, y los de ellos, solo para ver, sin la columna **Apply**. Para eso la llave necesita el permiso **See sub-resellers** (`subresellers:read`) y el administrador del panel debe tener habilitados los sub-resellers para el grupo del reseller. Una llave sin el permiso muestra `Could not load sub-resellers: this panel key is not allowed to list sub-resellers.`: las llaves no se pueden editar, así que crea una llave nueva en el panel marcando **See sub-resellers** y pega el token nuevo en el panel configurado.
+
 ### Vender recargas de créditos (credit top-ups)
 
 Un producto **Credit top-up** no crea nada nuevo: cuando se paga, **suma créditos** a una cuenta Sub-Reseller que ya existe en el mismo panel. Úsalo cuando tus resellers compran paquetes de créditos desde tu web.
@@ -446,7 +448,7 @@ Dentro de **Addons → Xtream AI Panel** tienes estas pestañas:
 
 **Panels** — la lista de tus paneles con su estado, SSL, última comprobación y acciones (Test, Edit, Activate/Deactivate, Delete). Aquí también está el formulario **Add Panel** / **Edit Panel**.
 
-**Sub-Resellers** — la lista de sub-resellers y sus créditos, con el ajuste de créditos.
+**Sub-Resellers** — la lista de sub-resellers y sus créditos, con el ajuste de créditos (llave Admin). Con una llave Reseller muestra solo los sub-resellers propios de ese reseller, solo para ver (ver sección 10).
 
 **Lines** — para buscar líneas. Puedes filtrar por **nombre de usuario** (campo "Username contains…") y por **estado** (All statuses / Enabled / Disabled). La columna **Status** de cada fila muestra los mismos cuatro valores que la pestaña del servicio: `Active`, `Expired`, `Disabled` y `Blocked by panel`.
 

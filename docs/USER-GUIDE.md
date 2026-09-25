@@ -414,6 +414,8 @@ You don't need to choose Package or Bouquets for this type: the module ignores t
 2. Enter an optional **Reason**.
 3. Click **Apply**.
 
+Adjusting credits needs an **Admin** key on the panel entry. With a **Reseller** key (module 1.12.0 and later) the screen shows that reseller's own sub-resellers, and theirs, read only, with no **Apply** column. For that the key needs the **See sub-resellers** permission (`subresellers:read`) and the panel administrator must have enabled sub-resellers for the reseller's group. A key without the permission shows `Could not load sub-resellers: this panel key is not allowed to list sub-resellers.`: keys cannot be edited, so create a new key on the panel with **See sub-resellers** ticked and paste the new token on the panel entry.
+
 ### Selling credit top-ups
 
 A **Credit top-up** product creates nothing new: when it is paid, it **adds credits** to a Sub-Reseller account that already exists on the same panel. Use it when your resellers buy credit packages from your website.
@@ -444,7 +446,7 @@ Inside **Addons → Xtream AI Panel** you have these tabs:
 
 **Panels** — the list of your panels with their status, SSL, last check, and actions (Test, Edit, Activate/Deactivate, Delete). The **Add Panel** / **Edit Panel** form is also here.
 
-**Sub-Resellers** — the list of sub-resellers and their credits, with the credit adjustment form.
+**Sub-Resellers** — the list of sub-resellers and their credits, with the credit adjustment form (Admin key). With a Reseller key it lists only that reseller's own sub-resellers, read only (see section 10).
 
 **Lines** — to search for lines. You can filter by **username** (the "Username contains…" field) and by **status** (All statuses / Enabled / Disabled). The **Status** column of each row shows the same four values as the service tab: `Active`, `Expired`, `Disabled` and `Blocked by panel`.
 

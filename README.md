@@ -95,7 +95,10 @@ account on the panel:
 - Panels: add, edit and remove panel connections; connection test for
   saved and unsaved credentials.
 - Dashboard: credits, panel health, counters and the update banner.
-- Sub-Resellers view (admin key only): list and adjust credits.
+- Sub-Resellers view: list sub-resellers and their credits. With an admin
+  key it shows every reseller of the panel and lets you adjust credits;
+  with a reseller key holding `subresellers:read` it shows that
+  reseller's own sub-resellers, read only (module 1.12.0 and later).
 - Lines browser with search and status filter.
 - Read-only Catalog view (streams and VOD).
 - Module Logs (WHMCS `tblmodulelog`) with date, action and a short
@@ -201,7 +204,7 @@ which parts of the module light up:
 | Catalog (packages, bouquets, streams, VOD), `me` | Yes | Yes |
 | Create sub-reseller | Yes | Yes |
 | Sub-Reseller product lifecycle (reset password/credits) | No (403) | Yes |
-| Addon "Sub-Resellers" view and dashboard reseller counters | No (403) | Yes |
+| Addon "Sub-Resellers" view and dashboard reseller counters | Own sub-resellers only, read only, with `subresellers:read` (module 1.12.0, panel updated 2026-09-25 or later) | Yes, whole panel, with credit adjustment |
 
 Recommended scopes when creating the key on the panel:
 
@@ -210,6 +213,11 @@ Recommended scopes when creating the key on the panel:
   `streams:read` and `vods:read` to enable the Catalog view.
 - **Sub-Reseller products (Admin key only):** the Line scopes above
   plus `resellers:read`, `resellers:write`, `subresellers:write`.
+- **Seeing your own sub-resellers with a Reseller key:** add
+  `subresellers:read` ("See sub-resellers" on the panel). It only works if
+  the panel administrator enabled sub-resellers for the reseller's group.
+  Keys cannot be edited: create a new key with it and paste the new token
+  on the panel entry.
 
 `/me` is accessible to any authenticated key (it is used by the
 Test Connection button and needs no scope).

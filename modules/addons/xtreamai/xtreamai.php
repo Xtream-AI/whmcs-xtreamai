@@ -9,7 +9,7 @@ function xtreamai_config()
     return [
         'name'        => 'Xtream AI Panel',
         'description' => 'Provision and manage IPTV lines from Xtream AI panels.',
-        'version'     => '1.11.0',
+        'version'     => '1.12.0',
         'author'      => 'Xtream AI',
         'language'    => 'english',
 
@@ -347,6 +347,9 @@ function xtreamai_adjust_credits(): string
     }
     if ($resellerId < 1) {
         throw new \RuntimeException('Reseller not found.');
+    }
+    if (\WhmcsXtreamAI\PanelApi::keyType($panelId) !== 'admin') {
+        throw new \RuntimeException('Adjusting sub-reseller credits needs an Admin key on this panel entry.');
     }
 
     $deltaRaw = (string) ($_POST['delta'] ?? '');
@@ -1895,9 +1898,14 @@ JS;
             $panelOptions .= '<option value="' . $pid . '"' . $selected . '>' . $h($panel->name) . '</option>';
         }
 
+        $resellersAdminKey = $selectedPanelId > 0 && \WhmcsXtreamAI\PanelApi::keyType($selectedPanelId) === 'admin';
+        $resellersSubtitle = $resellersAdminKey
+            ? 'Sub-resellers and their credit balances on the selected panel.'
+            : 'Your sub-resellers (and theirs) with their credit balances. Adjusting credits needs an Admin key.';
+
         echo '<div class="xtai-card">'
             . '<div class="xtai-card-head">'
-            . '<div><h2>Sub-Resellers</h2><p class="xtai-sub">Sub-resellers and their credit balances on the selected panel.</p></div>';
+            . '<div><h2>Sub-Resellers</h2><p class="xtai-sub">' . $h($resellersSubtitle) . '</p></div>';
 
         if (!empty($activePanels)) {
             echo '<form method="get" action="' . $linkList . '" class="xtai-panel-switch">'
@@ -1924,7 +1932,7 @@ JS;
                 $resellers     = $page['items'];
                 $resellersNext = $page['next_cursor'];
             } catch (\Throwable $e) {
-                $loadError = xtreamai_safe_message($e);
+                $loadError = xtreamai_resellers_load_message($e);
             }
 
             if ($loadError !== '') {
@@ -1933,7 +1941,9 @@ JS;
                 echo '<div class="xtai-empty"><span class="xtai-empty__icon" aria-hidden="true">&#128101;</span><p class="xtai-empty__title">No sub-resellers on this panel yet</p><p>Create a sub-reseller on the panel to manage it here.</p></div>';
             } else {
                 echo '<div class="xtai-table-wrap"><table class="xtai-table">'
-                    . '<thead><tr><th>Username</th><th>Email</th><th>Group</th><th>Status</th><th>Credits</th><th>Actions</th></tr></thead>'
+                    . '<thead><tr><th>Username</th><th>Email</th><th>Group</th><th>Status</th><th>Credits</th>'
+                    . ($resellersAdminKey ? '<th>Actions</th>' : '')
+                    . '</tr></thead>'
                     . '<tbody>';
                 foreach ($resellers as $row) {
                     $rid       = (int) ($row['id'] ?? 0);
@@ -1958,8 +1968,12 @@ JS;
                         . '<td>' . $remail . '</td>'
                         . '<td>' . $groupHtml . '</td>'
                         . '<td>' . $statusHtml . '</td>'
-                        . '<td>' . $creditsHtml . '</td>'
-                        . '<td><form method="post" action="' . $linkList . '" class="xtai-inline-form xtai-actions-inline">'
+                        . '<td>' . $creditsHtml . '</td>';
+                    if (!$resellersAdminKey) {
+                        echo '</tr>';
+                        continue;
+                    }
+                    echo '<td><form method="post" action="' . $linkList . '" class="xtai-inline-form xtai-actions-inline">'
                         . $token
                         . '<input type="hidden" name="action" value="adjust_credits">'
                         . '<input type="hidden" name="panel_id" value="' . $selectedPanelId . '">'
@@ -3096,6 +3110,16 @@ if(f){f.style.transition="opacity .18s ease";f.style.opacity="0";setTimeout(func
 })();
 </script>
 </div>';
+}
+
+function xtreamai_resellers_load_message(\Throwable $e)
+{
+    $msg = xtreamai_safe_message($e);
+    if (strpos($msg, 'subresellers:read') !== false) {
+        return 'this panel key is not allowed to list sub-resellers. On the panel, create a new API key with the "See sub-resellers" permission and paste it on this panel entry.';
+    }
+
+    return $msg;
 }
 
 function xtreamai_safe_message(\Throwable $e)
