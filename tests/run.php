@@ -289,6 +289,8 @@ namespace WhmcsXtreamAI {
         public static $clientResellers = array();
         public static $resellerLookups = array();
         public static $links = array();
+        public static $maxConnectionsWrites = array();
+        public static $maxConnectionsError = '';
 
         public static function find($serviceId)
         {
@@ -324,6 +326,17 @@ namespace WhmcsXtreamAI {
             self::$checks[] = $serviceId;
             if (isset(self::$rows[$serviceId])) {
                 self::$rows[$serviceId]['panel_checked_at'] = $checkedAt === null ? date('Y-m-d H:i:s') : $checkedAt;
+            }
+        }
+
+        public static function setMaxConnections($serviceId, $maxConnections)
+        {
+            if (self::$maxConnectionsError !== '') {
+                throw new \RuntimeException(self::$maxConnectionsError);
+            }
+            self::$maxConnectionsWrites[] = array('service_id' => $serviceId, 'max_connections' => $maxConnections);
+            if (isset(self::$rows[$serviceId])) {
+                self::$rows[$serviceId]['max_connections'] = $maxConnections;
             }
         }
 
@@ -527,6 +540,8 @@ namespace {
         \WhmcsXtreamAI\ServiceStore::$clientResellers = array();
         \WhmcsXtreamAI\ServiceStore::$resellerLookups = array();
         \WhmcsXtreamAI\ServiceStore::$links = array();
+        \WhmcsXtreamAI\ServiceStore::$maxConnectionsWrites = array();
+        \WhmcsXtreamAI\ServiceStore::$maxConnectionsError = '';
         \WhmcsXtreamAI\Settings::$values = array();
         $GLOBALS['moduleLog'] = array();
     }
@@ -4660,6 +4675,211 @@ namespace {
     );
 
     unset(\WhmcsXtreamAI\Settings::$values['notes_enabled']);
+
+    section('T. Maximum connections in the client area');
+
+    function clientAreaVars(array $params)
+    {
+        $area = xtreamai_ClientArea($params);
+
+        return isset($area['templateVariables']) ? $area['templateVariables'] : array();
+    }
+
+    function storedMaxConnections()
+    {
+        $row = isset(\WhmcsXtreamAI\ServiceStore::$rows[135]) ? \WhmcsXtreamAI\ServiceStore::$rows[135] : array();
+
+        return array_key_exists('max_connections', $row) ? $row['max_connections'] : 'absent';
+    }
+
+    function liveLine(array $overrides = array())
+    {
+        return array_merge(array(
+            'id' => '987654',
+            'username' => 'line_user',
+            'enabled' => true,
+            'admin_enabled' => true,
+            'exp_date' => 1822521600,
+            'expires_at' => '2027-10-01',
+            'max_connections' => 2,
+        ), $overrides);
+    }
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = liveLine();
+    $vars = clientAreaVars(baseParams());
+    same('a live read shows the line maximum', '2', isset($vars['max_connections']) ? $vars['max_connections'] : null);
+    same('a live read keeps the active count', 0, isset($vars['connections_count']) ? $vars['connections_count'] : null);
+    same('a live read persists the line maximum', 2, storedMaxConnections());
+    same('a live read asks the panel for the line once', 1, count(apiCalls('getLine')));
+    same('a live read lists the connections once', 1, count(apiCalls('lineConnections')));
+
+    \WhmcsXtreamAI\PanelApi::$getLineResult = liveLine(array('max_connections' => 5));
+    $vars = clientAreaVars(baseParams());
+    same('a cached view still shows the persisted maximum', '2', isset($vars['max_connections']) ? $vars['max_connections'] : null);
+    same('a cached view adds no line read', 1, count(apiCalls('getLine')));
+    same('a cached view lists the connections again', 2, count(apiCalls('lineConnections')));
+
+    linkService(array('panel_checked_at' => date('Y-m-d H:i:s'), 'max_connections' => 3));
+    resetApi();
+    $vars = clientAreaVars(baseParams());
+    same('a cached view uses the value stored by an earlier write', '3', isset($vars['max_connections']) ? $vars['max_connections'] : null);
+    same('a cached view with a stored value never reads the line', 0, count(apiCalls('getLine')));
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineError = 'Could not reach the panel.';
+    $vars = clientAreaVars(baseParams());
+    same('an unknown maximum leaves the badge as the active count only', '', isset($vars['max_connections']) ? $vars['max_connections'] : null);
+    same('a failed read persists nothing', array(), \WhmcsXtreamAI\ServiceStore::$maxConnectionsWrites);
+    same('a failed read still lists the connections', 1, count(apiCalls('lineConnections')));
+    same('a failed read keeps the template', 'templates/overview.tpl', xtreamai_ClientArea(baseParams())['tabOverviewReplacementTemplate']);
+
+    linkService(array('max_connections' => 4));
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineError = 'Could not reach the panel.';
+    $vars = clientAreaVars(baseParams());
+    same('a failed read shows the last known maximum', '4', isset($vars['max_connections']) ? $vars['max_connections'] : null);
+
+    linkService(array('max_connections' => 4));
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = liveLine(array('max_connections' => 0));
+    $vars = clientAreaVars(baseParams());
+    same('a zero maximum from the panel is stored as unknown', null, storedMaxConnections());
+    same('a zero maximum is not shown', '', isset($vars['max_connections']) ? $vars['max_connections'] : null);
+
+    linkService(array('max_connections' => 4));
+    resetApi();
+    $withoutField = liveLine();
+    unset($withoutField['max_connections']);
+    \WhmcsXtreamAI\PanelApi::$getLineResult = $withoutField;
+    $vars = clientAreaVars(baseParams());
+    same('a line read without the field keeps the stored maximum', 4, storedMaxConnections());
+    same('a line read without the field still shows it', '4', isset($vars['max_connections']) ? $vars['max_connections'] : null);
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = liveLine();
+    \WhmcsXtreamAI\ServiceStore::$maxConnectionsError = 'Unknown column max_connections';
+    $vars = clientAreaVars(baseParams());
+    same('a storage failure does not break the client area', '', isset($vars['max_connections']) ? $vars['max_connections'] : null);
+    same('a storage failure keeps the line username', 'line_user', isset($vars['username']) ? $vars['username'] : null);
+
+    linkService(array('panel_checked_at' => date('Y-m-d H:i:s'), 'max_connections' => 3));
+    resetApi();
+    $vars = clientAreaVars(baseParams(array('configoption5' => 'reseller')));
+    same('a Sub-Reseller client area shows no maximum', '', isset($vars['max_connections']) ? $vars['max_connections'] : null);
+    same('a Sub-Reseller client area never reads a line', 0, count(apiCalls('getLine')) + count(apiCalls('lineConnections')));
+
+    linkService(array('panel_account_id' => '41', 'username' => 'resA', 'max_connections' => 3));
+    resetApi();
+    $vars = clientAreaVars(baseParams(array('configoption5' => 'topup', 'configoption6' => '50')));
+    same('a top-up client area shows no maximum', '', isset($vars['max_connections']) ? $vars['max_connections'] : null);
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$createLineResult = array(
+        'id' => '900001',
+        'username' => '',
+        'expires_at' => '2027-01-01 00:00:00',
+        'max_connections' => 3,
+    );
+    $result = xtreamai_CreateAccount(baseParams());
+    same('a created line provisions', 'success', $result);
+    same('a created line stores the panel maximum', 3, storedMaxConnections());
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    resetApi();
+    \WhmcsXtreamAI\ServiceStore::$maxConnectionsError = 'Unknown column max_connections';
+    \WhmcsXtreamAI\PanelApi::$createLineResult = array(
+        'id' => '900001',
+        'username' => '',
+        'expires_at' => '2027-01-01 00:00:00',
+        'max_connections' => 3,
+    );
+    same('a storage failure never fails the provisioning', 'success', xtreamai_CreateAccount(baseParams()));
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    $result = xtreamai_CreateAccount(resellerParams(array('configoption8' => '20')));
+    same('a Sub-Reseller provisions', 'success', $result);
+    same('a Sub-Reseller stores no line maximum', array(), \WhmcsXtreamAI\ServiceStore::$maxConnectionsWrites);
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$renewResult = array('expires_at' => '2027-02-01 00:00:00', 'max_connections' => 3);
+    same('a renew with a matching count succeeds', 'success', xtreamai_Renew(baseParams(array('configoption7' => '3'))));
+    same('a renew stores the maximum from the renew answer', 3, storedMaxConnections());
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$renewResult = array('expires_at' => '2027-02-01 00:00:00', 'max_connections' => 3);
+    \WhmcsXtreamAI\PanelApi::$updateLineResult = liveLine(array('max_connections' => 5));
+    same('a renew that re-applies the count succeeds', 'success', xtreamai_Renew(baseParams(array('configoption7' => '5'))));
+    same('a renew stores the re-applied maximum', 5, storedMaxConnections());
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$renewResult = array('expires_at' => '2027-02-01 00:00:00', 'max_connections' => 3);
+    \WhmcsXtreamAI\PanelApi::$updateError = 'Could not reach the panel.';
+    same('a renew whose count update fails still succeeds', 'success', xtreamai_Renew(baseParams(array('configoption7' => '5'))));
+    same('a failed count update keeps the renew maximum', 3, storedMaxConnections());
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$updateLineResult = liveLine(array('max_connections' => 6));
+    same('a sync succeeds', 'success', xtreamai_sync(baseParams()));
+    same('a sync stores the panel maximum', 6, storedMaxConnections());
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$updateLineResult = liveLine(array('max_connections' => 7));
+    same('a package change succeeds', 'success', xtreamai_ChangePackage(baseParams()));
+    same('a package change stores the panel maximum', 7, storedMaxConnections());
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = liveLine(array('max_connections' => 8));
+    same('the refresh button succeeds', 'success', xtreamai_refresh(baseParams()));
+    same('the refresh button stores the panel maximum', 8, storedMaxConnections());
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$updateLineResult = liveLine(array('max_connections' => 9));
+    same('a push of the expiry succeeds', 'success', xtreamai_push_expiry(baseParams()));
+    same('a push of the expiry stores the panel maximum', 9, storedMaxConnections());
+
+    linkService();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$getLineResult = liveLine(array('max_connections' => 10));
+    same('a pull of the expiry succeeds', 'success', xtreamai_pull_expiry(baseParams()));
+    same('a pull of the expiry stores the panel maximum', 10, storedMaxConnections());
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
+    \WhmcsXtreamAI\PanelApi::$linesResult = array(
+        array('id' => 41, 'username' => 'line_user', 'enabled' => true, 'expires_at' => '2027-03-05', 'max_connections' => 2),
+    );
+    same('a linked existing line succeeds', 'success', xtreamai_link_existing(baseParams()));
+    same('a linked existing line stores the panel maximum', 2, storedMaxConnections());
+
+    $template = (string) file_get_contents(__DIR__ . '/../modules/servers/xtreamai/templates/overview.tpl');
+    ok(
+        'the badge adds the escaped maximum only when it is known',
+        strpos($template, '{$connections_count|escape}{if $max_connections} / {$max_connections|escape}{/if}</span>') !== false
+    );
+    same(
+        'the maximum appears once in the template',
+        1,
+        substr_count($template, '{$max_connections|escape}')
+    );
+
+    \WhmcsXtreamAI\ServiceStore::$rows = array();
+    \WHMCS\Database\Capsule::$rows['tblhosting'] = hostingRow();
+    resetApi();
 
     echo "\nSUMMARY: passed=" . $GLOBALS['passed'] . " failed=" . $GLOBALS['failed'] . "\n";
     exit($GLOBALS['failed'] === 0 ? 0 : 1);

@@ -55,7 +55,11 @@ the lifecycle:
   created, changed or deleted there).
 - Client-area card with credentials, M3U URL, EPG URL and active
   connections. Both URLs accept `{username}` and `{password}`
-  placeholders, replaced per client (URL-encoded).
+  placeholders, replaced per client (URL-encoded). On Line products the
+  Active Connections counter also shows the line's maximum, such as
+  `1 / 2` (module 1.14.0 and later), taken from the panel whenever the
+  module reads or writes the line; until the module has read it once,
+  only the active count is shown.
 - Admin service tab with the live panel state: panel, panel line id,
   panel username, line status (`Active`, `Expired`, `Disabled`,
   `Blocked by panel`), active connections, panel expiry, the WHMCS next

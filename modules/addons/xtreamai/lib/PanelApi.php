@@ -268,6 +268,7 @@ final class PanelApi
                 'id' => (string) self::value($line, 'id', ''),
                 'username' => (string) self::value($line, 'username', ''),
                 'enabled' => (bool) self::value($line, 'enabled', false),
+                'max_connections' => (int) self::value($line, 'max_connections', 0),
                 'expires_at' => self::expiryFrom($line),
             ];
         });
@@ -997,6 +998,7 @@ final class PanelApi
             'id' => (string) self::value($line, 'id', ''),
             'username' => (string) self::value($line, 'username', ''),
             'password' => (string) self::value($line, 'password', ''),
+            'max_connections' => (int) self::value($line, 'max_connections', 0),
             'expires_at' => self::expiryFrom($line),
         ];
     }

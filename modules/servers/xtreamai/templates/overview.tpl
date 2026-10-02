@@ -191,7 +191,7 @@
 <div class="panel panel-default card mb-3 xtai-client-card">
     <div class="panel-heading card-header xtai-client-card__header">
         <h3 class="panel-title card-title m-0">Active Connections</h3>
-        <span class="xtai-status-badge xtai-status-badge--neutral">{$connections_count|escape}</span>
+        <span class="xtai-status-badge xtai-status-badge--neutral">{$connections_count|escape}{if $max_connections} / {$max_connections|escape}{/if}</span>
     </div>
     <div class="panel-body card-body" style="padding:0;">
         {if $connections}

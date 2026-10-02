@@ -229,7 +229,7 @@ Cuando el cliente entra en su área de cliente de WHMCS y abre su servicio, ve u
 - **Credits** — sus créditos (solo en cuentas Sub-Reseller).
 - **Connection URL** — su enlace M3U, si lo configuraste en el panel.
 - **EPG URL** — su enlace EPG (XMLTV), si lo configuraste en el panel.
-- **Active Connections** — sus conexiones activas en ese momento (qué está viendo, desde qué IP y cuánto lleva).
+- **Active Connections** — sus conexiones activas en ese momento (qué está viendo, desde qué IP y cuánto lleva). El contador junto al título muestra cuántas conexiones hay abiertas y, desde el módulo 1.14.0, cuántas permite la línea, por ejemplo `1 / 2`. El máximo sale del panel y se actualiza cada vez que el módulo lee o escribe la línea; mientras no se conoce, se muestra solo el número de conexiones abiertas.
 
 Si la línea todavía no está lista, verá el aviso de que debe esperar a que termine la creación.
 

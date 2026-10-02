@@ -123,6 +123,15 @@ final class ServiceStore
 
     
 
+    public static function setMaxConnections(int $serviceId, ?int $maxConnections): void
+    {
+        Capsule::table(self::TABLE)->where('service_id', $serviceId)->update([
+            'max_connections' => $maxConnections,
+        ]);
+    }
+
+    
+
     public static function invalidatePanelCheck(int $serviceId): void
     {
         Capsule::table(self::TABLE)->where('service_id', $serviceId)->update([

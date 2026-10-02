@@ -90,6 +90,9 @@ final class Settings
                 if (!$schema->hasColumn(self::SERVICES_TABLE, 'last_action_at')) {
                     $table->timestamp('last_action_at')->nullable();
                 }
+                if (!$schema->hasColumn(self::SERVICES_TABLE, 'max_connections')) {
+                    $table->unsignedInteger('max_connections')->nullable();
+                }
             });
         }
 

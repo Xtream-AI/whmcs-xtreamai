@@ -227,7 +227,7 @@ When the customer opens their WHMCS client area and opens their service, they se
 - **Credits** — their credits (only for Sub-Reseller accounts).
 - **Connection URL** — their M3U link, if you set it on the panel.
 - **EPG URL** — their EPG (XMLTV) link, if you set it on the panel.
-- **Active Connections** — their active connections right now (what they are watching, from which IP, and for how long).
+- **Active Connections** — their active connections right now (what they are watching, from which IP, and for how long). The counter next to the title shows how many connections are open and, from module 1.14.0, how many the line allows, such as `1 / 2`. The maximum comes from the panel and is refreshed whenever the module reads or writes the line; until it is known, only the open count is shown.
 
 If the line isn't ready yet, they will see a notice telling them to wait for provisioning to finish.
 

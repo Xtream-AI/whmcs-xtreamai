@@ -1245,6 +1245,21 @@ function xtreamai_panelSummary(array $line, string $status): string
     return $summary;
 }
 
+function xtreamai_storeMaxConnections(int $serviceId, array $line): void
+{
+    if ($serviceId < 1 || !array_key_exists('max_connections', $line)) {
+        return;
+    }
+
+    $maxConnections = (int) $line['max_connections'];
+
+    try {
+        \WhmcsXtreamAI\ServiceStore::setMaxConnections($serviceId, $maxConnections > 0 ? $maxConnections : null);
+    } catch (\Throwable $e) {
+
+    }
+}
+
 function xtreamai_refreshFromPanel(array $params, bool $force = false): array
 {
     $out = [
@@ -1314,6 +1329,7 @@ function xtreamai_refreshFromPanel(array $params, bool $force = false): array
             isset($line['expires_at']) ? (string) $line['expires_at'] : null
         );
         \WhmcsXtreamAI\ServiceStore::recordPanelCheck($serviceId);
+        xtreamai_storeMaxConnections($serviceId, $line);
 
         $out['line'] = $line;
         $out['source'] = 'live';
@@ -1463,6 +1479,8 @@ function xtreamai_CreateAccount(array $params)
             'Active',
             isset($line['expires_at']) ? (string) $line['expires_at'] : null
         );
+
+        xtreamai_storeMaxConnections($serviceId, $line);
 
         xtreamai_updateHostingCredentials($serviceId, $finalUsername, $finalPassword);
         xtreamai_updateNextDueDate($serviceId, $line, $params);
@@ -1725,13 +1743,17 @@ function xtreamai_Renew(array $params)
         $idempotencyKey = hash('sha256', 'whmcs-renew|' . $serviceId . '|' . $panelExpiryBefore . '|' . $packageId);
 
         $result = \WhmcsXtreamAI\PanelApi::renewLine($panelId, $lineId, $packageId, null, $idempotencyKey);
+        $lineAfter = $result;
 
         try {
             $maxConn = \WhmcsXtreamAI\PanelApi::keyType($panelId) === 'admin'
                 ? xtreamai_maxConnectionsForService($params, $panelId, $packageId)
                 : 0;
             if ($maxConn > 0 && $maxConn !== (int) ($result['max_connections'] ?? 0)) {
-                \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, ['max_connections' => $maxConn]);
+                $updated = \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, ['max_connections' => $maxConn]);
+                if (array_key_exists('max_connections', $updated)) {
+                    $lineAfter = $updated;
+                }
             }
         } catch (\Throwable $e) {
             xtreamai_logModuleCall(
@@ -1748,6 +1770,7 @@ function xtreamai_Renew(array $params)
             isset($result['expires_at']) ? (string) $result['expires_at'] : null
         );
         xtreamai_updateNextDueDate($serviceId, $result, $params);
+        xtreamai_storeMaxConnections($serviceId, $lineAfter);
 
         $action = 'Renewed: '
             . (!empty($before['expires_at']) ? xtreamai_formatDate((string) $before['expires_at']) : 'unknown')
@@ -1867,6 +1890,7 @@ function xtreamai_link_existing(array $params)
         ) {
             \WhmcsXtreamAI\ServiceStore::updateFromLine($serviceId, $line);
         }
+        xtreamai_storeMaxConnections($serviceId, $line);
 
         xtreamai_updateHostingCredentials(
             $serviceId,
@@ -1925,6 +1949,7 @@ function xtreamai_sync(array $params)
 
         if (is_array($line) && !empty($line['id'])) {
             \WhmcsXtreamAI\ServiceStore::updateFromLine($serviceId, $line);
+            xtreamai_storeMaxConnections($serviceId, $line);
             $summary .= ' · panel: ' . \WhmcsXtreamAI\LineStatus::fromPanel($line);
             if (!empty($line['expires_at'])) {
                 $summary .= ', expires ' . xtreamai_formatDate((string) $line['expires_at']);
@@ -1997,8 +2022,9 @@ function xtreamai_push_expiry(array $params)
         }
 
         $lineId = xtreamai_lineIdForService($params);
-        \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, ['exp_date' => $epoch]);
+        $updated = \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, ['exp_date' => $epoch]);
         \WhmcsXtreamAI\ServiceStore::invalidatePanelCheck($serviceId);
+        xtreamai_storeMaxConnections($serviceId, $updated);
 
         $action = 'Panel expiry set to ' . xtreamai_formatDate($nextDue) . ' from the WHMCS next due date';
         \WhmcsXtreamAI\ServiceStore::recordAction($serviceId, $action);
@@ -2036,6 +2062,7 @@ function xtreamai_pull_expiry(array $params)
 
         xtreamai_updateNextDueDate($serviceId, $line, $params);
         \WhmcsXtreamAI\ServiceStore::invalidatePanelCheck($serviceId);
+        xtreamai_storeMaxConnections($serviceId, $line);
 
         $action = 'WHMCS next due date set to ' . xtreamai_formatDate($expiry) . ' from the panel expiry';
         \WhmcsXtreamAI\ServiceStore::recordAction($serviceId, $action);
@@ -2096,7 +2123,8 @@ function xtreamai_ChangePackage(array $params)
         }
 
         if ($fields !== []) {
-            \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
+            $updated = \WhmcsXtreamAI\PanelApi::updateLine($panelId, $lineId, $fields);
+            xtreamai_storeMaxConnections((int) ($params['serviceid'] ?? 0), $updated);
         }
 
         if ($packageChanged) {
@@ -2267,6 +2295,7 @@ function xtreamai_ClientArea(array $params)
     $credits = '';
     $connections = [];
     $connectionsCount = 0;
+    $maxConnections = '';
     $topupUsername = '';
     $topupCredits = '';
     $accountType = xtreamai_accountType($params);
@@ -2289,6 +2318,9 @@ function xtreamai_ClientArea(array $params)
             }
             if (!empty($row->expires_at)) {
                 $expires = xtreamai_formatDate((string) $row->expires_at);
+            }
+            if ($accountType === 'line' && isset($row->max_connections) && (int) $row->max_connections > 0) {
+                $maxConnections = (string) (int) $row->max_connections;
             }
             if ($accountType !== 'topup' && !empty($row->panel_id)) {
                 $panel = \WhmcsXtreamAI\PanelStore::find((int) $row->panel_id);
@@ -2384,6 +2416,7 @@ function xtreamai_ClientArea(array $params)
             'topup_credits' => $topupCredits,
             'connections' => $connections,
             'connections_count' => $connectionsCount,
+            'max_connections' => $maxConnections,
         ],
     ];
 }
